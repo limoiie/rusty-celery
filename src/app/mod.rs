@@ -15,14 +15,13 @@ use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
 use tokio_stream::StreamMap;
 
-mod trace;
+use trace::{build_tracer, TraceBuilder, TracerTrait};
 
 use crate::broker::{build_and_connect, configure_task_routes, Broker, BrokerBuilder};
 use crate::error::{BrokerError, CeleryError, TraceError};
 use crate::protocol::{Message, MessageContentType, TryDeserializeMessage};
 use crate::routing::Rule;
 use crate::task::{AsyncResult, Signature, Task, TaskEvent, TaskOptions, TaskStatus};
-use trace::{build_tracer, TraceBuilder, TracerTrait};
 
 struct Config<Bb>
 where
@@ -197,26 +196,24 @@ where
 
     /// Construct a [`Celery`] app with the current configuration.
     pub async fn build(self) -> Result<Celery<Bb::Broker>, CeleryError> {
+        let mut task_routes = Vec::new();
+
         // Declare default queue to broker.
-        let broker_builder = self
+        let broker = self
             .config
             .broker_builder
-            .declare_queue(&self.config.default_queue);
-
-        let (broker_builder, task_routes) =
-            configure_task_routes(broker_builder, &self.config.task_routes)?;
-
-        let broker = build_and_connect(
-            broker_builder,
-            self.config.broker_connection_timeout,
-            if self.config.broker_connection_retry {
-                self.config.broker_connection_max_retries
-            } else {
-                0
-            },
-            self.config.broker_connection_retry_delay,
-        )
-        .await?;
+            .declare_queue(&self.config.default_queue)
+            .task_routes(&self.config.task_routes, &mut task_routes)?
+            .build_and_connect(
+                self.config.broker_connection_timeout,
+                if self.config.broker_connection_retry {
+                    self.config.broker_connection_max_retries
+                } else {
+                    0
+                },
+                self.config.broker_connection_retry_delay,
+            )
+            .await?;
 
         Ok(Celery {
             name: self.config.name,

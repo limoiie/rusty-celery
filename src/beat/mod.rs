@@ -21,7 +21,7 @@
 //! Here instead we have only one scheduler struct, and the different backends
 //! correspond to the different scheduler implementations in Python.
 
-use crate::broker::{build_and_connect, configure_task_routes, Broker, BrokerBuilder};
+use crate::broker::{Broker, BrokerBuilder};
 use crate::routing::{self, Rule};
 use crate::{
     error::{BeatError, BrokerError},
@@ -183,26 +183,24 @@ where
 
     /// Construct a `Beat` app with the current configuration.
     pub async fn build(self) -> Result<Beat<Bb::Broker, Sb>, BeatError> {
+        let mut task_routes = Vec::new();
+
         // Declare default queue to broker.
-        let broker_builder = self
+        let broker = self
             .config
             .broker_builder
-            .declare_queue(&self.config.default_queue);
-
-        let (broker_builder, task_routes) =
-            configure_task_routes(broker_builder, &self.config.task_routes)?;
-
-        let broker = build_and_connect(
-            broker_builder,
-            self.config.broker_connection_timeout,
-            if self.config.broker_connection_retry {
-                self.config.broker_connection_max_retries
-            } else {
-                0
-            },
-            self.config.broker_connection_retry_delay,
-        )
-        .await?;
+            .declare_queue(&self.config.default_queue)
+            .task_routes(&self.config.task_routes, &mut task_routes)?
+            .build_and_connect(
+                self.config.broker_connection_timeout,
+                if self.config.broker_connection_retry {
+                    self.config.broker_connection_max_retries
+                } else {
+                    0
+                },
+                self.config.broker_connection_retry_delay,
+            )
+            .await?;
 
         let scheduler = Scheduler::new(broker);
 

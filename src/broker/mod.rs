@@ -7,19 +7,20 @@ use futures::Stream;
 use log::error;
 use tokio::time::{self, Duration};
 
+pub use amqp::{AMQPBroker, AMQPBrokerBuilder};
+
 use crate::error::BrokerError;
 use crate::{
     protocol::{Message, TryDeserializeMessage},
     routing::Rule,
 };
 
-mod amqp;
-mod redis;
 pub use self::redis::{RedisBroker, RedisBrokerBuilder};
-pub use amqp::{AMQPBroker, AMQPBrokerBuilder};
 
+mod amqp;
 #[cfg(test)]
 pub mod mock;
+mod redis;
 
 /// A message [`Broker`] is used as the transport for producing or consuming tasks.
 #[async_trait]
@@ -92,7 +93,7 @@ pub trait Broker: Send + Sync + Sized {
 
 /// A [`BrokerBuilder`] is used to create a type of broker with a custom configuration.
 #[async_trait]
-pub trait BrokerBuilder {
+pub trait BrokerBuilder: Send + Sized {
     type Broker: Broker;
 
     /// Create a new `BrokerBuilder`.
@@ -104,64 +105,62 @@ pub trait BrokerBuilder {
     /// Declare a queue.
     fn declare_queue(self, name: &str) -> Self;
 
+    /// Create route rules and declare queues
+    fn task_routes(
+        mut self,
+        task_routes: &[(String, String)],
+        rules: &mut Vec<Rule>,
+    ) -> Result<Self, BrokerError> {
+        for (pattern, queue) in task_routes {
+            rules.push(Rule::new(pattern, queue)?);
+            // Ensure all other queues mentioned in task_routes are declared to the broker.
+            self = self.declare_queue(queue);
+        }
+
+        Ok(self)
+    }
+
     /// Set the heartbeat.
     fn heartbeat(self, heartbeat: Option<u16>) -> Self;
 
     /// Construct the `Broker` with the given configuration.
     async fn build(&self, connection_timeout: u32) -> Result<Self::Broker, BrokerError>;
-}
 
-// TODO: this function consumes the broker_builder, which results in a not so ergonomic API.
-// Can it be improved?
-/// A utility function to configure the task routes on a broker builder.
-pub(crate) fn configure_task_routes<Bb: BrokerBuilder>(
-    mut broker_builder: Bb,
-    task_routes: &[(String, String)],
-) -> Result<(Bb, Vec<Rule>), BrokerError> {
-    let mut rules: Vec<Rule> = Vec::with_capacity(task_routes.len());
-    for (pattern, queue) in task_routes {
-        let rule = Rule::new(pattern, queue)?;
-        rules.push(rule);
-        // Ensure all other queues mentioned in task_routes are declared to the broker.
-        broker_builder = broker_builder.declare_queue(queue);
-    }
+    /// A utility function that can be used to build a broker
+    /// and initialize the connection.
+    async fn build_and_connect(
+        self,
+        connection_timeout: u32,
+        connection_max_retries: u32,
+        connection_retry_delay: u32,
+    ) -> Result<Self::Broker, BrokerError> {
+        let mut broker: Option<Self::Broker> = None;
 
-    Ok((broker_builder, rules))
-}
-
-/// A utility function that can be used to build a broker
-/// and initialize the connection.
-pub(crate) async fn build_and_connect<Bb: BrokerBuilder>(
-    broker_builder: Bb,
-    connection_timeout: u32,
-    connection_max_retries: u32,
-    connection_retry_delay: u32,
-) -> Result<Bb::Broker, BrokerError> {
-    let mut broker: Option<Bb::Broker> = None;
-
-    for _ in 0..connection_max_retries {
-        match broker_builder.build(connection_timeout).await {
-            Err(err) => {
-                if err.is_connection_error() {
-                    error!("{}", err);
-                    error!(
-                        "Failed to establish connection with broker, trying again in {}s...",
-                        connection_retry_delay
-                    );
-                    time::sleep(Duration::from_secs(connection_retry_delay as u64)).await;
-                    continue;
+        for _ in 0..connection_max_retries {
+            let fut = self.build(connection_timeout);
+            match fut.await {
+                Err(err) => {
+                    if err.is_connection_error() {
+                        error!("{:?}", err);
+                        error!(
+                            "Failed to establish connection with broker, trying again in {}s...",
+                            connection_retry_delay
+                        );
+                        time::sleep(Duration::from_secs(connection_retry_delay as u64)).await;
+                        continue;
+                    }
+                    return Err(err);
                 }
-                return Err(err);
-            }
-            Ok(b) => {
-                broker = Some(b);
-                break;
-            }
-        };
-    }
+                Ok(b) => {
+                    broker = Some(b);
+                    break;
+                }
+            };
+        }
 
-    broker.ok_or_else(|| {
-        error!("Failed to establish connection with broker");
-        BrokerError::NotConnected
-    })
+        broker.ok_or_else(|| {
+            error!("Failed to establish connection with broker");
+            BrokerError::NotConnected
+        })
+    }
 }
