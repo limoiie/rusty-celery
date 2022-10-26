@@ -189,6 +189,7 @@ fn test_serialization() {
             argsrepr: Some("(1)".into()),
             kwargsrepr: Some("{'y': 2}".into()),
             origin: Some("gen123@piper".into()),
+            ignore_result: None
         },
         raw_body: Vec::from(JSON),
     };

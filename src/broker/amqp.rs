@@ -540,6 +540,7 @@ impl TryDeserializeMessage for Delivery {
                 argsrepr: get_header_str(headers, "argsrepr"),
                 kwargsrepr: get_header_str(headers, "kwargsrepr"),
                 origin: get_header_str(headers, "origin"),
+                ignore_result: None,
             },
             raw_body: self.data.clone(),
         })
@@ -625,6 +626,7 @@ mod tests {
                 argsrepr: Some("(1)".into()),
                 kwargsrepr: Some("{'y': 2}".into()),
                 origin: Some("gen123@piper".into()),
+                ignore_result: None
             },
             raw_body: vec![],
         };

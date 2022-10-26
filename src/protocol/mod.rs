@@ -611,6 +611,9 @@ pub struct MessageHeaders {
 
     /// A string representing the nodename of the process that produced the task.
     pub origin: Option<String>,
+
+    /// A boolean value indicating whether to ignore the result or not.
+    pub ignore_result: Option<bool>,
 }
 
 /// The body of a message. Contains the task itself as well as callback / errback
@@ -708,6 +711,7 @@ impl Delivery {
                 argsrepr: self.headers.argsrepr.clone(),
                 kwargsrepr: self.headers.kwargsrepr.clone(),
                 origin: self.headers.origin.clone(),
+                ignore_result: self.headers.ignore_result,
             },
             raw_body,
         })

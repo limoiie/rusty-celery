@@ -47,6 +47,9 @@ where
 
     /// The time limit (in seconds) allocated for this task to execute.
     pub time_limit: Option<u32>,
+
+    /// A boolean value indicating whether to ignore the result or not.
+    pub ignore_result: bool,
 }
 
 impl<T> Request<T>
@@ -75,6 +78,7 @@ where
             hostname: None,
             reply_to: m.properties.reply_to,
             time_limit,
+            ignore_result: m.headers.ignore_result.unwrap_or(false),
         }
     }
 
