@@ -64,7 +64,7 @@ pub trait Task: Send + Sync + std::marker::Sized {
     type Params: Clone + Send + Sync + Serialize + for<'de> Deserialize<'de>;
 
     /// The return type of the task.
-    type Returns: Send + Sync + std::fmt::Debug;
+    type Returns: Send + Sync + std::fmt::Debug + Serialize + for<'de> Deserialize<'de>;
 
     /// Used to initialize a task instance from a request.
     fn from_request(request: Request<Self>, options: TaskOptions) -> Self;

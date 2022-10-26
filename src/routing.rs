@@ -3,7 +3,7 @@ use globset::{Glob, GlobMatcher};
 use crate::error::BadRoutingPattern;
 
 /// A rule for routing tasks to a queue based on a glob pattern.
-pub(crate) struct Rule {
+pub struct Rule {
     pub(crate) pattern: GlobMatcher,
     pub(crate) queue: String,
 }

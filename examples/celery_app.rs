@@ -2,14 +2,16 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use celery::prelude::*;
 use env_logger::Env;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
+use celery::prelude::*;
+
 // This generates the task struct and impl with the name set to the function name "add"
 #[celery::task]
-fn add(x: i32, y: i32) -> TaskResult<i32> {
+async fn add(x: i32, y: i32) -> TaskResult<i32> {
+    time::sleep(Duration::from_secs(3)).await;
     Ok(x + y)
 }
 
@@ -63,8 +65,9 @@ async fn main() -> Result<()> {
     let opt = CeleryOpt::from_args();
 
     let my_app = celery::app!(
-        // broker = RedisBroker { std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://127.0.0.1:6379/".into()) },
-        broker = AMQPBroker { std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://127.0.0.1:5672".into()) },
+        broker = RedisBroker { std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://127.0.0.1:6379/".into()) },
+        // broker = AMQPBroker { std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://127.0.0.1:5672".into()) },
+        backend = RedisBackend { std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://127.0.0.1:6379".into()) },
         tasks = [
             add,
             buggy_task,

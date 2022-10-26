@@ -21,201 +21,148 @@
 //! Here instead we have only one scheduler struct, and the different backends
 //! correspond to the different scheduler implementations in Python.
 
-use crate::broker::{Broker, BrokerBuilder};
-use crate::routing::{self, Rule};
-use crate::{
-    error::{BeatError, BrokerError},
-    protocol::MessageContentType,
-    task::{Signature, Task, TaskOptions},
-};
-use log::{debug, error, info};
+use std::marker::PhantomData;
 use std::time::SystemTime;
+
+use log::{debug, error, info};
 use tokio::time::{self, Duration};
 
-mod scheduler;
+pub use backend::{LocalSchedulerBackend, SchedulerBackend, SchedulerBackendBuilder};
+pub use schedule::{CronSchedule, DeltaSchedule, Schedule};
+pub use scheduled_task::ScheduledTask;
 pub use scheduler::Scheduler;
 
+use crate::broker::{Broker, BrokerBuilder};
+use crate::config::{BrokerConfig, ConfigBroker, ConfigTask, TaskConfig};
+use crate::routing::{self, Rule};
+use crate::task::TaskOptions;
+use crate::{
+    error::{BeatError, BrokerError},
+    task::{Signature, Task},
+};
+
 mod backend;
-pub use backend::{LocalSchedulerBackend, SchedulerBackend};
-
 mod schedule;
-pub use schedule::{CronSchedule, DeltaSchedule, Schedule};
-
 mod scheduled_task;
-pub use scheduled_task::ScheduledTask;
+mod scheduler;
 
-struct Config<Bb>
-where
-    Bb: BrokerBuilder,
-{
-    name: String,
-    broker_builder: Bb,
-    broker_connection_timeout: u32,
-    broker_connection_retry: bool,
-    broker_connection_max_retries: u32,
-    broker_connection_retry_delay: u32,
-    default_queue: String,
-    task_routes: Vec<(String, String)>,
-    task_options: TaskOptions,
+pub(crate) struct SchedulerConfig {
     max_sleep_duration: Option<Duration>,
 }
 
-/// Used to create a [`Beat`] app with a custom configuration.
-pub struct BeatBuilder<Bb, Sb>
-where
-    Bb: BrokerBuilder,
-    Sb: SchedulerBackend,
-{
-    config: Config<Bb>,
-    scheduler_backend: Sb,
+struct BeatConfig {
+    task: TaskConfig,
+    broker: BrokerConfig,
+    scheduler: SchedulerConfig,
 }
 
-impl<Bb> BeatBuilder<Bb, LocalSchedulerBackend>
-where
-    Bb: BrokerBuilder,
-{
-    /// Get a `BeatBuilder` for creating a `Beat` app with a default scheduler backend
-    /// and a custom configuration.
-    pub fn with_default_scheduler_backend(name: &str, broker_url: &str) -> Self {
+impl BeatConfig {
+    fn default(url: String) -> Self {
         Self {
-            config: Config {
-                name: name.into(),
-                broker_builder: Bb::new(broker_url),
-                broker_connection_timeout: 2,
-                broker_connection_retry: true,
-                broker_connection_max_retries: 5,
-                broker_connection_retry_delay: 5,
+            task: TaskConfig {
+                options: TaskOptions::default(),
+                routes: vec![],
+            },
+            broker: BrokerConfig {
+                url,
                 default_queue: "celery".into(),
-                task_routes: vec![],
-                task_options: TaskOptions::default(),
+                prefetch_count: None,
+                heartbeat: None,
+                connection_timeout: 2,
+                connection_retry: true,
+                connection_max_retries: 5,
+                connection_retry_delay: 5,
+            },
+            scheduler: SchedulerConfig {
                 max_sleep_duration: None,
             },
-            scheduler_backend: LocalSchedulerBackend::new(),
         }
     }
 }
 
-impl<Bb, Sb> BeatBuilder<Bb, Sb>
+/// Used to create a [`Beat`] app with a custom configuration.
+pub struct BeatBuilder<B, Sb = LocalSchedulerBackend>
 where
-    Bb: BrokerBuilder,
+    B: Broker,
+    Sb: SchedulerBackend,
+{
+    name: String,
+    config: BeatConfig,
+    _modules_type: PhantomData<(B, Sb)>,
+}
+
+impl<B, Sb> ConfigTask for BeatBuilder<B, Sb>
+where
+    B: Broker,
+    Sb: SchedulerBackend,
+{
+    fn get_task_config(&mut self) -> &mut TaskConfig {
+        &mut self.config.task
+    }
+}
+
+impl<B, Sb> ConfigBroker for BeatBuilder<B, Sb>
+where
+    B: Broker,
+    Sb: SchedulerBackend,
+{
+    fn get_broker_config(&mut self) -> &mut BrokerConfig {
+        &mut self.config.broker
+    }
+}
+
+impl<B, Sb> BeatBuilder<B, Sb>
+where
+    B: Broker,
     Sb: SchedulerBackend,
 {
     /// Get a `BeatBuilder` for creating a `Beat` app with a custom scheduler backend and
     /// a custom configuration.
-    pub fn with_custom_scheduler_backend(
-        name: &str,
-        broker_url: &str,
-        scheduler_backend: Sb,
-    ) -> Self {
+    pub fn new(name: &str, broker_url: String) -> Self {
         Self {
-            config: Config {
-                name: name.into(),
-                broker_builder: Bb::new(broker_url),
-                broker_connection_timeout: 2,
-                broker_connection_retry: true,
-                broker_connection_max_retries: 5,
-                broker_connection_retry_delay: 5,
-                default_queue: "celery".into(),
-                task_routes: vec![],
-                task_options: TaskOptions::default(),
-                max_sleep_duration: None,
-            },
-            scheduler_backend,
+            name: name.into(),
+            config: BeatConfig::default(broker_url),
+            _modules_type: PhantomData::default(),
         }
-    }
-
-    /// Set the name of the default queue to something other than "celery".
-    pub fn default_queue(mut self, queue_name: &str) -> Self {
-        self.config.default_queue = queue_name.into();
-        self
-    }
-
-    /// Set the broker heartbeat. The default value depends on the broker implementation.
-    pub fn heartbeat(mut self, heartbeat: Option<u16>) -> Self {
-        self.config.broker_builder = self.config.broker_builder.heartbeat(heartbeat);
-        self
-    }
-
-    /// Add a routing rule.
-    pub fn task_route(mut self, pattern: &str, queue: &str) -> Self {
-        self.config.task_routes.push((pattern.into(), queue.into()));
-        self
-    }
-
-    /// Set a timeout in seconds before giving up establishing a connection to a broker.
-    pub fn broker_connection_timeout(mut self, timeout: u32) -> Self {
-        self.config.broker_connection_timeout = timeout;
-        self
-    }
-
-    /// Set whether or not to automatically try to re-establish connection to the AMQP broker.
-    pub fn broker_connection_retry(mut self, retry: bool) -> Self {
-        self.config.broker_connection_retry = retry;
-        self
-    }
-
-    /// Set the maximum number of retries before we give up trying to re-establish connection
-    /// to the AMQP broker.
-    pub fn broker_connection_max_retries(mut self, max_retries: u32) -> Self {
-        self.config.broker_connection_max_retries = max_retries;
-        self
-    }
-
-    /// Set the number of seconds to wait before re-trying the connection with the broker.
-    pub fn broker_connection_retry_delay(mut self, retry_delay: u32) -> Self {
-        self.config.broker_connection_retry_delay = retry_delay;
-        self
-    }
-
-    /// Set a default content type of the message body serialization.
-    pub fn task_content_type(mut self, content_type: MessageContentType) -> Self {
-        self.config.task_options.content_type = Some(content_type);
-        self
     }
 
     /// Set a maximum sleep duration, which limits the amount of time that
     /// can pass between ticks. This is useful to ensure that the scheduler backend
     /// implementation is called regularly.
     pub fn max_sleep_duration(mut self, max_sleep_duration: Duration) -> Self {
-        self.config.max_sleep_duration = Some(max_sleep_duration);
+        self.config.scheduler.max_sleep_duration = Some(max_sleep_duration);
         self
     }
 
     /// Construct a `Beat` app with the current configuration.
-    pub async fn build(self) -> Result<Beat<Bb::Broker, Sb>, BeatError> {
+    pub async fn build(self) -> Result<Beat<B, Sb>, BeatError> {
         let mut task_routes = Vec::new();
 
         // Declare default queue to broker.
-        let broker = self
-            .config
-            .broker_builder
-            .declare_queue(&self.config.default_queue)
-            .task_routes(&self.config.task_routes, &mut task_routes)?
+        let broker = B::Builder::new(self.config.broker.url.as_str())
+            .heartbeat(self.config.broker.heartbeat.unwrap_or(Some(60)))
+            .prefetch_count(self.config.broker.prefetch_count.unwrap_or(10))
+            .declare_queue(&self.config.broker.default_queue)
+            .task_routes(&self.config.task.routes, &mut task_routes)?
             .build_and_connect(
-                self.config.broker_connection_timeout,
-                if self.config.broker_connection_retry {
-                    self.config.broker_connection_max_retries
+                self.config.broker.connection_timeout,
+                if self.config.broker.connection_retry {
+                    self.config.broker.connection_max_retries
                 } else {
                     0
                 },
-                self.config.broker_connection_retry_delay,
+                self.config.broker.connection_retry_delay,
             )
             .await?;
 
-        let scheduler = Scheduler::new(broker);
+        let scheduler_backend = Sb::Builder::new().build();
 
         Ok(Beat {
-            name: self.config.name,
-            scheduler,
-            scheduler_backend: self.scheduler_backend,
+            name: self.name,
+            scheduler: Scheduler::new(broker),
+            scheduler_backend,
             task_routes,
-            default_queue: self.config.default_queue,
-            task_options: self.config.task_options,
-            broker_connection_timeout: self.config.broker_connection_timeout,
-            broker_connection_retry: self.config.broker_connection_retry,
-            broker_connection_max_retries: self.config.broker_connection_max_retries,
-            broker_connection_retry_delay: self.config.broker_connection_retry_delay,
-            max_sleep_duration: self.config.max_sleep_duration,
+            config: self.config,
         })
     }
 }
@@ -225,37 +172,16 @@ where
 ///
 /// It drives execution by making the internal scheduler "tick", and updates the list of scheduled
 /// tasks through a customizable scheduler backend.
-pub struct Beat<Br: Broker, Sb: SchedulerBackend> {
+pub struct Beat<Br, Sb = LocalSchedulerBackend>
+where
+    Br: Broker,
+    Sb: SchedulerBackend,
+{
     pub name: String,
     pub scheduler: Scheduler<Br>,
     pub scheduler_backend: Sb,
-
+    config: BeatConfig,
     task_routes: Vec<Rule>,
-    default_queue: String,
-    task_options: TaskOptions,
-
-    broker_connection_timeout: u32,
-    broker_connection_retry: bool,
-    broker_connection_max_retries: u32,
-    broker_connection_retry_delay: u32,
-
-    max_sleep_duration: Option<Duration>,
-}
-
-impl<Br> Beat<Br, LocalSchedulerBackend>
-where
-    Br: Broker,
-{
-    /// Get a `BeatBuilder` for creating a `Beat` app with a custom configuration and a
-    /// default scheduler backend.
-    pub fn default_builder(
-        name: &str,
-        broker_url: &str,
-    ) -> BeatBuilder<Br::Builder, LocalSchedulerBackend> {
-        BeatBuilder::<Br::Builder, LocalSchedulerBackend>::with_default_scheduler_backend(
-            name, broker_url,
-        )
-    }
 }
 
 impl<Br, Sb> Beat<Br, Sb>
@@ -265,16 +191,8 @@ where
 {
     /// Get a `BeatBuilder` for creating a `Beat` app with a custom configuration and
     /// a custom scheduler backend.
-    pub fn custom_builder(
-        name: &str,
-        broker_url: &str,
-        scheduler_backend: Sb,
-    ) -> BeatBuilder<Br::Builder, Sb> {
-        BeatBuilder::<Br::Builder, Sb>::with_custom_scheduler_backend(
-            name,
-            broker_url,
-            scheduler_backend,
-        )
+    pub fn builder(name: &str, broker_url: String) -> BeatBuilder<Br, Sb> {
+        BeatBuilder::<Br, Sb>::new(name, broker_url)
     }
 
     /// Schedule the execution of a task.
@@ -296,11 +214,11 @@ where
         T: Task + Clone + 'static,
         S: Schedule + 'static,
     {
-        signature.options.update(&self.task_options);
+        signature.options.update(&self.config.task.options);
         let queue = match &signature.queue {
             Some(queue) => queue.to_string(),
             None => routing::route(T::NAME, &self.task_routes)
-                .unwrap_or(&self.default_queue)
+                .unwrap_or(&self.config.broker.default_queue)
                 .to_string(),
         };
         let message_factory = Box::new(signature);
@@ -314,7 +232,7 @@ where
         info!("Starting beat service");
         loop {
             let result = self.beat_loop().await;
-            if !self.broker_connection_retry {
+            if !self.config.broker.connection_retry {
                 return result;
             }
 
@@ -334,17 +252,17 @@ where
             }
 
             let mut reconnect_successful: bool = false;
-            for _ in 0..self.broker_connection_max_retries {
+            for _ in 0..self.config.broker.connection_max_retries {
                 info!("Trying to re-establish connection with broker");
                 time::sleep(Duration::from_secs(
-                    self.broker_connection_retry_delay as u64,
+                    self.config.broker.connection_retry_delay as u64,
                 ))
                 .await;
 
                 match self
                     .scheduler
                     .broker
-                    .reconnect(self.broker_connection_timeout)
+                    .reconnect(self.config.broker.connection_timeout)
                     .await
                 {
                     Err(err) => {
@@ -381,7 +299,7 @@ where
                 let sleep_interval = next_tick_at.duration_since(now).expect(
                     "Unexpected error when unwrapping a SystemTime comparison that is not supposed to fail",
                 );
-                let sleep_interval = match &self.max_sleep_duration {
+                let sleep_interval = match &self.config.scheduler.max_sleep_duration {
                     Some(max_sleep_duration) => std::cmp::min(sleep_interval, *max_sleep_duration),
                     None => sleep_interval,
                 };

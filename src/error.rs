@@ -20,6 +20,11 @@ pub enum CeleryError {
     #[error("broker error")]
     BrokerError(#[from] BrokerError),
 
+    /// Any other backend-level error that could happen when initializing or with an
+    /// open connection.
+    #[error("backend error")]
+    BackendError(#[from] BackendError),
+
     /// Any other IO error that could occur.
     #[error("IO error")]
     IoError(#[from] std::io::Error),
@@ -43,6 +48,11 @@ pub enum BeatError {
     #[error("broker error")]
     BrokerError(#[from] BrokerError),
 
+    /// Any other backend-level error that could happen when initializing or with an
+    /// open connection.
+    #[error("backend error")]
+    BackendError(#[from] BackendError),
+
     /// A protocol error.
     #[error("protocol error")]
     ProtocolError(#[from] ProtocolError),
@@ -61,7 +71,7 @@ pub enum ScheduleError {
 }
 
 /// Errors that can occur at the task level.
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug, Serialize, Deserialize, Clone)]
 pub enum TaskError {
     /// An error that is expected to happen every once in a while.
     ///
@@ -104,11 +114,18 @@ pub enum TaskError {
     /// to manually trigger a retry from within a task.
     #[error("task retry triggered")]
     Retry(Option<DateTime<Utc>>),
+
+    /// Raised when a task is revoked by the control.
+    ///
+    /// This error variant should generally not be used directly. Instead, you
+    /// should revoke by the control to cancel a task.
+    #[error("task revoked so no result available: {0}")]
+    RevokedError(String),
 }
 
 /// Errors that can occur while tracing a task.
-#[derive(Error, Debug)]
-pub(crate) enum TraceError {
+#[derive(Error, Debug, Clone)]
+pub enum TraceError {
     /// Raised when a task throws an error while executing.
     #[error("task failed")]
     TaskError(TaskError),
@@ -178,6 +195,17 @@ impl BrokerError {
             _ => false,
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum BackendError {
+    /// Raised when a backend URL can't be parsed.
+    #[error("invalid backend URL '{0}'")]
+    InvalidBackendUrl(String),
+
+    /// Any other Redis error that could happen.
+    #[error("Redis error \"{0}\"")]
+    RedisError(#[from] redis::RedisError),
 }
 
 /// An invalid glob pattern for a routing rule.

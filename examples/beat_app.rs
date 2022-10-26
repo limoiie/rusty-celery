@@ -1,11 +1,11 @@
 #![allow(unused_variables)]
 
 use anyhow::Result;
-use celery::beat::{CronSchedule, DeltaSchedule};
-use celery::broker::AMQPBroker;
-use celery::task::TaskResult;
 use env_logger::Env;
 use tokio::time::Duration;
+
+use celery::beat::{CronSchedule, DeltaSchedule};
+use celery::prelude::*;
 
 const QUEUE_NAME: &str = "celery";
 

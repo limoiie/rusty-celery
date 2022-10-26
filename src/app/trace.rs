@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
-use std::convert::TryFrom;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Duration, Instant};
 
+use crate::backend::Backend;
 use crate::error::{ProtocolError, TaskError, TraceError};
 use crate::protocol::Message;
 use crate::task::{Request, Task, TaskEvent, TaskOptions, TaskStatus};
@@ -14,19 +18,22 @@ use crate::task::{Request, Task, TaskEvent, TaskOptions, TaskStatus};
 /// and handling any errors, logging, and running the `on_failure` or `on_success` post-execution
 /// methods. It communicates its progress and the results back to the application through
 /// the `event_tx` channel and the return value of `Tracer::trace`, respectively.
-pub(super) struct Tracer<T>
+pub(super) struct Tracer<T, D>
 where
     T: Task,
+    D: Backend,
 {
     task: T,
+    backend: Arc<D>,
     event_tx: UnboundedSender<TaskEvent>,
 }
 
-impl<T> Tracer<T>
+impl<T, D> Tracer<T, D>
 where
     T: Task,
+    D: Backend,
 {
-    fn new(task: T, event_tx: UnboundedSender<TaskEvent>) -> Self {
+    fn new(task: T, backend: Arc<D>, event_tx: UnboundedSender<TaskEvent>) -> Self {
         if let Some(eta) = task.request().eta {
             info!(
                 "Task {}[{}] received, ETA: {}",
@@ -38,16 +45,20 @@ where
             info!("Task {}[{}] received", task.name(), task.request().id);
         }
 
-        Self { task, event_tx }
+        Self { task, backend, event_tx }
     }
 }
 
 #[async_trait]
-impl<T> TracerTrait for Tracer<T>
+impl<T, D> TracerTrait<D> for Tracer<T, D>
 where
     T: Task,
+    D: Backend,
 {
     async fn trace(&mut self) -> Result<(), TraceError> {
+        let uuid = &self.task.request().id;
+        let publish_result = !self.task.request().ignore_result;
+
         if self.is_expired() {
             warn!(
                 "Task {}[{}] expired, discarding",
@@ -64,6 +75,20 @@ where
                 // bigger things to worry about like running out of memory.
                 error!("Failed sending task event");
             });
+
+        self.backend
+            .mark_as_started(
+                uuid,
+                HashMap::from([
+                    ("pid".to_owned(), std::process::id().to_string()),
+                    (
+                        "hostname".to_owned(),
+                        self.task.request().hostname.as_ref().unwrap().to_string(),
+                    ),
+                ]),
+                Some(self.task.request()),
+            )
+            .await;
 
         let start = Instant::now();
         let result = match self.task.time_limit() {
@@ -96,6 +121,18 @@ where
                     .unwrap_or_else(|_| {
                         error!("Failed sending task event");
                     });
+
+                self.backend
+                    .mark_as_done(
+                        uuid,
+                        &returned,
+                        Some(self.task.request()),
+                        publish_result,
+                        None,
+                    )
+                    .await;
+
+                self.backend.process_cleanup().await;
 
                 Ok(())
             }
@@ -136,6 +173,15 @@ where
                         );
                         (true, eta)
                     }
+                    TaskError::RevokedError(ref reason) => {
+                        error!(
+                            "Task {}[{}] was revoked as {}",
+                            self.task.name(),
+                            &self.task.request().id,
+                            reason
+                        );
+                        (false, None)
+                    }
                 };
 
                 // Run failure callback.
@@ -148,6 +194,18 @@ where
                     });
 
                 if !should_retry {
+                    self.backend
+                        .mark_as_failure(
+                            uuid,
+                            TraceError::TaskError(e.clone()),
+                            None,
+                            Some(self.task.request()),
+                            true,
+                            false,
+                            None,
+                        )
+                        .await;
+
                     return Err(TraceError::TaskError(e));
                 }
 
@@ -159,6 +217,19 @@ where
                             self.task.name(),
                             &self.task.request().id,
                         );
+
+                        self.backend
+                            .mark_as_failure(
+                                uuid,
+                                TraceError::TaskError(e.clone()),
+                                None,
+                                Some(self.task.request()),
+                                true,
+                                false,
+                                None,
+                            )
+                            .await;
+
                         return Err(TraceError::TaskError(e));
                     }
                     info!(
@@ -176,6 +247,18 @@ where
                         retries + 1,
                     );
                 }
+
+                self.backend
+                    .mark_as_retry(
+                        uuid,
+                        TraceError::TaskError(e),
+                        None,
+                        Some(self.task.request()),
+                        None,
+                    )
+                    .await;
+
+                self.backend.process_cleanup().await;
 
                 Err(TraceError::Retry(
                     retry_eta.or_else(|| self.task.retry_eta()),
@@ -204,7 +287,7 @@ where
 }
 
 #[async_trait]
-pub(super) trait TracerTrait: Send + Sync {
+pub(super) trait TracerTrait<D: Backend>: Send + Sync {
     /// Wraps the execution of a task, catching and logging errors and then running
     /// the appropriate post-execution functions.
     async fn trace(&mut self) -> Result<(), TraceError>;
@@ -219,21 +302,26 @@ pub(super) trait TracerTrait: Send + Sync {
     fn acks_late(&self) -> bool;
 }
 
-pub(super) type TraceBuilderResult = Result<Box<dyn TracerTrait>, ProtocolError>;
+pub(super) type TraceBuilderResult<D> = Result<Box<dyn TracerTrait<D>>, ProtocolError>;
 
-pub(super) type TraceBuilder = Box<
-    dyn Fn(Message, TaskOptions, UnboundedSender<TaskEvent>, String) -> TraceBuilderResult
+pub(super) type TraceBuilder<D> = Box<
+    dyn Fn(Message, TaskOptions, Arc<D>, UnboundedSender<TaskEvent>, String) -> TraceBuilderResult<D>
         + Send
         + Sync
         + 'static,
 >;
 
-pub(super) fn build_tracer<T: Task + Send + 'static>(
+pub(super) fn build_tracer<T, D>(
     message: Message,
     mut options: TaskOptions,
+    backend: Arc<D>,
     event_tx: UnboundedSender<TaskEvent>,
     hostname: String,
-) -> TraceBuilderResult {
+) -> TraceBuilderResult<D>
+where
+    T: Task + Send + 'static,
+    D: Backend + 'static,
+{
     // Build request object.
     let mut request = Request::<T>::try_from(message)?;
     request.hostname = Some(hostname);
@@ -247,5 +335,5 @@ pub(super) fn build_tracer<T: Task + Send + 'static>(
     // it.
     let task = T::from_request(request, options);
 
-    Ok(Box::new(Tracer::<T>::new(task, event_tx)))
+    Ok(Box::new(Tracer::<T, D>::new(task, backend, event_tx)))
 }

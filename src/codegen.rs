@@ -5,32 +5,27 @@ pub use celery_codegen::task;
 macro_rules! __app_internal {
     (
         $broker_type:ty { $broker_url:expr },
+        [ $( $backend_type:ty { $backend_url:expr } )? ],
         [ $( $t:ty ),* ],
         [ $( $pattern:expr => $queue:expr ),* ],
         $( $x:ident = $y:expr, )*
     ) => {{
-        async fn _build_app(mut builder: $crate::CeleryBuilder::<<$broker_type as $crate::broker::Broker>::Builder>) ->
-            $crate::export::Result<$crate::export::Arc<$crate::Celery::<$broker_type>>> {
-            let celery: $crate::Celery<$broker_type> = builder.build().await?;
+        let mut builder = <
+            $crate::Celery<$broker_type $( , $backend_type )?>
+        >::builder("celery", $broker_url);
 
-            $(
-                celery.register_task::<$t>().await?;
-            )*
+        $( builder = builder.backend_url($backend_url); )?
+        $( builder = builder.$x($y); )*
+        $( builder = builder.task_route($pattern, $queue); )*
+
+        async fn _build_app(mut builder: $crate::CeleryBuilder::<$broker_type $( , $backend_type )?>)
+                            -> $crate::export::Result<$crate::export::Arc<
+                                   $crate::Celery<$broker_type $( , $backend_type )?> >> {
+            let celery = builder.build().await?;
+            $( celery.register_task::<$t>().await?; )*
 
             Ok($crate::export::Arc::new(celery))
         }
-
-        let broker_url = $broker_url;
-
-        let mut builder = $crate::Celery::<$broker_type>::builder("celery", &broker_url);
-
-        $(
-            builder = builder.$x($y);
-        )*
-
-        $(
-            builder = builder.task_route($pattern, $queue);
-        )*
 
         _build_app(builder)
     }};
@@ -41,7 +36,7 @@ macro_rules! __app_internal {
 macro_rules! __beat_internal {
     (
         $broker_type:ty { $broker_url:expr },
-        $scheduler_backend_type:ty { $scheduler_backend:expr },
+        [ $( $scheduler_backend_type:ty {} )? ],
         [
             $( $task_name:expr => {
                 $task_type:ty,
@@ -52,28 +47,28 @@ macro_rules! __beat_internal {
         [ $( $pattern:expr => $queue:expr ),* ],
         $( $x:ident = $y:expr, )*
     ) => {{
-        async fn _build_beat(mut builder: $crate::beat::BeatBuilder::<<$broker_type as $crate::broker::Broker>::Builder, $scheduler_backend_type>) ->
-            $crate::export::BeatResult<$crate::beat::Beat::<$broker_type, $scheduler_backend_type>> {
+        let mut builder = <
+            $crate::beat::Beat::<$broker_type $( , $scheduler_backend_type )?>
+        >::builder("beat", $broker_url);
+
+        $( builder = builder.$x($y); )*
+        $( builder = builder.task_route($pattern, $queue); )*
+
+        async fn _build_beat(
+            mut builder: $crate::beat::BeatBuilder::<$broker_type $( , $scheduler_backend_type )?>
+        ) -> $crate::export::BeatResult<
+            $crate::beat::Beat::<$broker_type $( , $scheduler_backend_type )?>
+        > {
             let mut beat = builder.build().await?;
 
-            $(
-                beat.schedule_named_task($task_name.to_string(), <$task_type>::new( $( $task_arg ),* ), $schedule);
-            )*
+            $( beat.schedule_named_task(
+                $task_name.to_string(),
+                <$task_type>::new( $( $task_arg ),* ),
+                $schedule
+            ); )*
 
             Ok(beat)
         }
-
-        let broker_url = $broker_url;
-
-        let mut builder = $crate::beat::Beat::<$broker_type, $scheduler_backend_type>::custom_builder("beat", &broker_url, $scheduler_backend);
-
-        $(
-            builder = builder.$x($y);
-        )*
-
-        $(
-            builder = builder.task_route($pattern, $queue);
-        )*
 
         _build_beat(builder)
     }};
@@ -152,12 +147,14 @@ macro_rules! __beat_internal {
 macro_rules! app {
     (
         broker = $broker_type:ty { $broker_url:expr },
+        $( backend = $backend_type:ty { $backend_url:expr }, )?
         tasks = [ $( $t:ty ),* $(,)? ],
         task_routes = [ $( $pattern:expr => $queue:expr ),* $(,)? ]
         $(, $x:ident = $y:expr )* $(,)?
     ) => {
         $crate::__app_internal!(
             $broker_type { $broker_url },
+            [ $( $backend_type { $backend_url } )? ],
             [ $( $t ),* ],
             [ $( $pattern => $queue ),* ],
             $( $x = $y, )*
@@ -281,6 +278,8 @@ macro_rules! app {
 /// struct CustomSchedulerBackend {}
 ///
 /// impl SchedulerBackend for CustomSchedulerBackend {
+///     type Builder = CustomSchedulerBackendBuilder;
+///
 ///     fn should_sync(&self) -> bool {
 ///         unimplemented!()
 ///     }
@@ -290,11 +289,23 @@ macro_rules! app {
 ///     }
 /// }
 ///
+/// struct CustomSchedulerBackendBuilder {}
+///
+/// impl SchedulerBackendBuilder<CustomSchedulerBackend> for CustomSchedulerBackendBuilder {
+///     fn new() -> Self {
+///         Self {}
+///     }
+///
+///     fn build(self) -> CustomSchedulerBackend {
+///         CustomSchedulerBackend {}
+///     }
+/// }
+///
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// let beat = celery::beat!(
 ///     broker = AMQPBroker { std::env::var("AMQP_ADDR").unwrap() },
-///     scheduler_backend = CustomSchedulerBackend { CustomSchedulerBackend {} },
+///     scheduler_backend = CustomSchedulerBackend,
 ///     tasks = [],
 ///     task_routes = [
 ///         "*" => "beat_queue",
@@ -307,6 +318,7 @@ macro_rules! app {
 macro_rules! beat {
     (
         broker = $broker_type:ty { $broker_url:expr },
+        $( scheduler_backend = $scheduler_backend_type:ty, )?
         tasks = [
             $( $task_name:expr => {
                 $task_type:ty,
@@ -319,35 +331,8 @@ macro_rules! beat {
     ) => {
         $crate::__beat_internal!(
             $broker_type { $broker_url },
-            $crate::beat::LocalSchedulerBackend { $crate::beat::LocalSchedulerBackend::new() },
-            [ $ (
-                $task_name => {
-                    $task_type,
-                    $schedule,
-                    $args
-                }
-            ),* ],
-            [ $( $pattern => $queue ),* ],
-            $( $x = $y, )*
-        );
-    };
-    (
-        broker = $broker_type:ty { $broker_url:expr },
-        scheduler_backend = $scheduler_backend_type:ty { $scheduler_backend:expr },
-        tasks = [
-            $( $task_name:expr => {
-                $task_type:ty,
-                schedule = $schedule:expr,
-                args = $args:tt $(,)?
-            } ),* $(,)?
-        ],
-        task_routes = [ $( $pattern:expr => $queue:expr ),* $(,)? ]
-        $(, $x:ident = $y:expr )* $(,)?
-    ) => {
-        $crate::__beat_internal!(
-            $broker_type { $broker_url },
-            $scheduler_backend_type { $scheduler_backend },
-            [ $ (
+            [ $( $scheduler_backend_type {} )? ],
+            [ $(
                 $task_name => {
                     $task_type,
                     $schedule,

@@ -2,17 +2,19 @@
 
 import argparse
 import os
+import random
 import sys
 import time
 
 from celery import Celery
 from celery.bin.celery import main as _main
 
-
-my_app = Celery("celery", broker=os.environ.get("AMQP_ADDR", "amqp://127.0.0.1:5672"))
+my_app = Celery("celery",
+                broker=os.environ.get("REDIS_ADDR", "redis://127.0.0.1:6379"),
+                backend=os.environ.get("REDIS_ADDR", "redis://127.0.0.1:6379"))
 my_app.conf.update(
-    result_backend=None,
-    task_ignore_result=True,
+    # result_backend=None,
+    # task_ignore_result=True,
     task_routes=(
         [("buggy_task", {"queue": "buggy-queue"})],
         [("*", {"queue": "celery"})],
@@ -34,7 +36,8 @@ def add(x, y):
     retry_backoff=True,
 )
 def buggy_task():
-    raise RuntimeError("This error is part of the example: it is used to showcase error handling")
+    raise RuntimeError(
+        "This error is part of the example: it is used to showcase error handling")
 
 
 @my_app.task(name="long_running_task", max_retries=2)
@@ -55,7 +58,8 @@ def parse_args():
     )
     parser.add_argument("mode", choices=["consume", "produce"])
     parser.add_argument(
-        "task", nargs="*", choices=["add", "buggy_task", "long_running_task", "bound_task"]
+        "task", nargs="*",
+        choices=["add", "buggy_task", "long_running_task", "bound_task"]
     )
     return parser.parse_args()
 
@@ -67,7 +71,7 @@ def main():
             "celery",
             "--app=celery_app.my_app",
             "worker",
-            "-Q=celery,buggy-queue",
+            "-Qcelery,buggy-queue",
             "-Ofair",
             "--loglevel=info",
         ]
@@ -76,7 +80,10 @@ def main():
         if opts.task:
             for task in opts.task:
                 if task == "add":
-                    add.apply_async(args=(1, 0))
+                    x, y = random.randint(10, 100), random.randint(10, 100)
+                    print(f'{x} + {y} == ', end='', flush=True)
+                    sum = add.apply_async(args=(x, y)).wait()
+                    print(f'{sum}')
                 elif task == "buggy_task":
                     buggy_task.apply_async()
                 elif task == "long_running_task":

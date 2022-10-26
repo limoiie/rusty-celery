@@ -1,15 +1,15 @@
-use colored::Colorize;
-use futures::stream::StreamExt;
-use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
+use std::marker::PhantomData;
 use std::sync::Arc;
-use tokio::select;
 
+use colored::Colorize;
+use futures::stream::StreamExt;
+use log::{debug, error, info, warn};
+use tokio::select;
 #[cfg(unix)]
 use tokio::signal::unix::{signal, Signal, SignalKind};
-
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::RwLock;
 use tokio::time::{self, Duration};
@@ -17,62 +17,114 @@ use tokio_stream::StreamMap;
 
 use trace::{build_tracer, TraceBuilder, TracerTrait};
 
-use crate::broker::{build_and_connect, configure_task_routes, Broker, BrokerBuilder};
+use crate::app::trace::TraceBuilderResult;
+use crate::backend::DisabledBackend;
+use crate::backend::{Backend, BackendBuilder};
+use crate::broker::{Broker, BrokerBuilder};
+use crate::config::{
+    BackendConfig, BrokerConfig, ConfigBackend, ConfigBroker, ConfigTask, TaskConfig,
+};
 use crate::error::{BrokerError, CeleryError, TraceError};
-use crate::protocol::{Message, MessageContentType, TryDeserializeMessage};
+use crate::kombu_serde::SerializerKind;
+use crate::protocol::{Message, TryDeserializeMessage};
 use crate::routing::Rule;
 use crate::task::{AsyncResult, Signature, Task, TaskEvent, TaskOptions, TaskStatus};
 
-struct Config<Bb>
-where
-    Bb: BrokerBuilder,
-{
-    name: String,
-    hostname: String,
-    broker_builder: Bb,
-    broker_connection_timeout: u32,
-    broker_connection_retry: bool,
-    broker_connection_max_retries: u32,
-    broker_connection_retry_delay: u32,
-    default_queue: String,
-    task_options: TaskOptions,
-    task_routes: Vec<(String, String)>,
+mod trace;
+
+pub(crate) struct CeleryConfig {
+    pub(crate) task: TaskConfig,
+    pub(crate) broker: BrokerConfig,
+    pub(crate) backend: BackendConfig,
+}
+
+impl CeleryConfig {
+    fn default(url: String) -> Self {
+        Self {
+            task: TaskConfig {
+                options: TaskOptions::default(),
+                routes: vec![],
+            },
+            broker: BrokerConfig {
+                url,
+                default_queue: "celery".into(),
+                prefetch_count: None,
+                heartbeat: None,
+                connection_timeout: 2,
+                connection_retry: true,
+                connection_max_retries: 5,
+                connection_retry_delay: 5,
+            },
+            backend: BackendConfig {
+                url: String::new(),
+                result_serializer: SerializerKind::JSON,
+                result_expires: Some(chrono::Duration::days(1)),
+            },
+        }
+    }
 }
 
 /// Used to create a [`Celery`] app with a custom configuration.
-pub struct CeleryBuilder<Bb>
+pub struct CeleryBuilder<B, D = DisabledBackend>
 where
-    Bb: BrokerBuilder,
+    B: Broker,
+    D: Backend,
 {
-    config: Config<Bb>,
+    name: String,
+    hostname: String,
+    config: CeleryConfig,
+    _builder_type: PhantomData<(B, D)>,
 }
 
-impl<Bb> CeleryBuilder<Bb>
+impl<B, D> ConfigTask for CeleryBuilder<B, D>
 where
-    Bb: BrokerBuilder,
+    B: Broker,
+    D: Backend,
+{
+    fn get_task_config(&mut self) -> &mut TaskConfig {
+        &mut self.config.task
+    }
+}
+
+impl<B, D> ConfigBroker for CeleryBuilder<B, D>
+where
+    B: Broker,
+    D: Backend,
+{
+    fn get_broker_config(&mut self) -> &mut BrokerConfig {
+        &mut self.config.broker
+    }
+}
+
+impl<B, D> ConfigBackend for CeleryBuilder<B, D>
+where
+    B: Broker,
+    D: Backend,
+{
+    fn get_backend_config(&mut self) -> &mut BackendConfig {
+        &mut self.config.backend
+    }
+}
+
+impl<B, D> CeleryBuilder<B, D>
+where
+    B: Broker + Send,
+    D: Backend,
 {
     /// Get a [`CeleryBuilder`] for creating a [`Celery`] app with a custom configuration.
-    pub fn new(name: &str, broker_url: &str) -> Self {
+    pub fn new(name: &str, broker_url: String) -> Self {
         Self {
-            config: Config {
-                name: name.into(),
-                hostname: format!(
-                    "{}@{}",
-                    name,
-                    hostname::get()
-                        .ok()
-                        .and_then(|sys_hostname| sys_hostname.into_string().ok())
-                        .unwrap_or_else(|| "unknown".into())
-                ),
-                broker_builder: Bb::new(broker_url),
-                broker_connection_timeout: 2,
-                broker_connection_retry: true,
-                broker_connection_max_retries: 5,
-                broker_connection_retry_delay: 5,
-                default_queue: "celery".into(),
-                task_options: TaskOptions::default(),
-                task_routes: vec![],
-            },
+            name: name.into(),
+            hostname: format!(
+                "{}@{}",
+                name,
+                hostname::get()
+                    .ok()
+                    .and_then(|sys_hostname| sys_hostname.into_string().ok())
+                    .unwrap_or_else(|| "unknown".into())
+            ),
+            config: CeleryConfig::default(broker_url),
+            _builder_type: PhantomData::default(),
         }
     }
 
@@ -81,159 +133,52 @@ where
     /// *This field should probably be named "nodename" to avoid confusion with the
     /// system hostname, but we're trying to be consistent with Python Celery.*
     pub fn hostname(mut self, hostname: &str) -> Self {
-        self.config.hostname = hostname.into();
-        self
-    }
-
-    /// Set the name of the default queue to something other than "celery".
-    pub fn default_queue(mut self, queue_name: &str) -> Self {
-        self.config.default_queue = queue_name.into();
-        self
-    }
-
-    /// Set the prefetch count. The default value depends on the broker implementation,
-    /// but it's recommended that you always set this to a value that works best
-    /// for your application.
-    ///
-    /// This may take some tuning, as it depends on a lot of factors, such
-    /// as whether your tasks are IO bound (higher prefetch count is better) or CPU bound (lower
-    /// prefetch count is better).
-    pub fn prefetch_count(mut self, prefetch_count: u16) -> Self {
-        self.config.broker_builder = self.config.broker_builder.prefetch_count(prefetch_count);
-        self
-    }
-
-    /// Set the broker heartbeat. The default value depends on the broker implementation.
-    pub fn heartbeat(mut self, heartbeat: Option<u16>) -> Self {
-        self.config.broker_builder = self.config.broker_builder.heartbeat(heartbeat);
-        self
-    }
-
-    /// Set an app-level time limit for tasks (see [`TaskOptions::time_limit`]).
-    pub fn task_time_limit(mut self, task_time_limit: u32) -> Self {
-        self.config.task_options.time_limit = Some(task_time_limit);
-        self
-    }
-
-    /// Set an app-level hard time limit for tasks (see [`TaskOptions::hard_time_limit`]).
-    ///
-    /// *Note that this is really only for compatability with Python workers*.
-    /// `time_limit` and `hard_time_limit` are treated the same by Rust workers, and if both
-    /// are set, the minimum of the two will be used.
-    pub fn task_hard_time_limit(mut self, task_hard_time_limit: u32) -> Self {
-        self.config.task_options.hard_time_limit = Some(task_hard_time_limit);
-        self
-    }
-
-    /// Set an app-level maximum number of retries for tasks (see [`TaskOptions::max_retries`]).
-    pub fn task_max_retries(mut self, task_max_retries: u32) -> Self {
-        self.config.task_options.max_retries = Some(task_max_retries);
-        self
-    }
-
-    /// Set an app-level minimum retry delay for tasks (see [`TaskOptions::min_retry_delay`]).
-    pub fn task_min_retry_delay(mut self, task_min_retry_delay: u32) -> Self {
-        self.config.task_options.min_retry_delay = Some(task_min_retry_delay);
-        self
-    }
-
-    /// Set an app-level maximum retry delay for tasks (see [`TaskOptions::max_retry_delay`]).
-    pub fn task_max_retry_delay(mut self, task_max_retry_delay: u32) -> Self {
-        self.config.task_options.max_retry_delay = Some(task_max_retry_delay);
-        self
-    }
-
-    /// Set whether by default `UnexpectedError`s should be retried for (see
-    /// [`TaskOptions::retry_for_unexpected`]).
-    pub fn task_retry_for_unexpected(mut self, retry_for_unexpected: bool) -> Self {
-        self.config.task_options.retry_for_unexpected = Some(retry_for_unexpected);
-        self
-    }
-
-    /// Set whether by default a task is acknowledged before or after execution (see
-    /// [`TaskOptions::acks_late`]).
-    pub fn acks_late(mut self, acks_late: bool) -> Self {
-        self.config.task_options.acks_late = Some(acks_late);
-        self
-    }
-
-    /// Set default serialization format a task will have (see [`TaskOptions::content_type`]).
-    pub fn task_content_type(mut self, content_type: MessageContentType) -> Self {
-        self.config.task_options.content_type = Some(content_type);
-        self
-    }
-
-    /// Add a routing rule.
-    pub fn task_route(mut self, pattern: &str, queue: &str) -> Self {
-        self.config.task_routes.push((pattern.into(), queue.into()));
-        self
-    }
-
-    /// Set a timeout in seconds before giving up establishing a connection to a broker.
-    pub fn broker_connection_timeout(mut self, timeout: u32) -> Self {
-        self.config.broker_connection_timeout = timeout;
-        self
-    }
-
-    /// Set whether or not to automatically try to re-establish connection to the AMQP broker.
-    pub fn broker_connection_retry(mut self, retry: bool) -> Self {
-        self.config.broker_connection_retry = retry;
-        self
-    }
-
-    /// Set the maximum number of retries before we give up trying to re-establish connection
-    /// to the AMQP broker.
-    pub fn broker_connection_max_retries(mut self, max_retries: u32) -> Self {
-        self.config.broker_connection_max_retries = max_retries;
-        self
-    }
-
-    /// Set the number of seconds to wait before re-trying the connection with the broker.
-    pub fn broker_connection_retry_delay(mut self, retry_delay: u32) -> Self {
-        self.config.broker_connection_retry_delay = retry_delay;
+        self.hostname = hostname.into();
         self
     }
 
     /// Construct a [`Celery`] app with the current configuration.
-    pub async fn build(self) -> Result<Celery<Bb::Broker>, CeleryError> {
+    pub async fn build(self) -> Result<Celery<B, D>, CeleryError> {
         let mut task_routes = Vec::new();
 
         // Declare default queue to broker.
-        let broker = self
-            .config
-            .broker_builder
-            .declare_queue(&self.config.default_queue)
-            .task_routes(&self.config.task_routes, &mut task_routes)?
+        let broker = B::Builder::new(self.config.broker.url.as_str())
+            .prefetch_count(self.config.broker.prefetch_count.unwrap_or(10))
+            .heartbeat(self.config.broker.heartbeat.unwrap_or(Some(60)))
+            .declare_queue(&self.config.broker.default_queue)
+            .task_routes(&self.config.task.routes, &mut task_routes)?
             .build_and_connect(
-                self.config.broker_connection_timeout,
-                if self.config.broker_connection_retry {
-                    self.config.broker_connection_max_retries
+                self.config.broker.connection_timeout,
+                if self.config.broker.connection_retry {
+                    self.config.broker.connection_max_retries
                 } else {
                     0
                 },
-                self.config.broker_connection_retry_delay,
+                self.config.broker.connection_retry_delay,
             )
             .await?;
 
+        let backend = D::Builder::new(self.config.backend.url.as_str())
+            .result_serializer(self.config.backend.result_serializer)
+            .result_expires(self.config.backend.result_expires)
+            .build()
+            .await?;
+
         Ok(Celery {
-            name: self.config.name,
-            hostname: self.config.hostname,
+            name: self.name,
+            hostname: self.hostname,
             broker,
-            default_queue: self.config.default_queue,
-            task_options: self.config.task_options,
+            backend: Arc::new(backend),
             task_routes,
             task_trace_builders: RwLock::new(HashMap::new()),
-            broker_connection_timeout: self.config.broker_connection_timeout,
-            broker_connection_retry: self.config.broker_connection_retry,
-            broker_connection_max_retries: self.config.broker_connection_max_retries,
-            broker_connection_retry_delay: self.config.broker_connection_retry_delay,
+            config: self.config,
         })
     }
 }
 
 /// A [`Celery`] app is used to produce or consume tasks asynchronously. This is the struct that is
 /// created with the [`app!`] macro.
-pub struct Celery<B: Broker> {
+pub struct Celery<B: Broker, D: Backend = DisabledBackend> {
     /// An arbitrary, human-readable name for the app.
     pub name: String,
 
@@ -243,32 +188,28 @@ pub struct Celery<B: Broker> {
     /// The app's broker.
     pub broker: B,
 
-    /// The default queue to send and receive from.
-    pub default_queue: String,
-
-    /// Default task options.
-    pub task_options: TaskOptions,
+    /// The app's backend.
+    pub backend: Arc<D>,
 
     /// A vector of routing rules in the order of their importance.
     task_routes: Vec<Rule>,
 
     /// Mapping of task name to task tracer factory. Used to create a task tracer
     /// from an incoming message.
-    task_trace_builders: RwLock<HashMap<String, TraceBuilder>>,
+    task_trace_builders: RwLock<HashMap<String, TraceBuilder<D>>>,
 
-    broker_connection_timeout: u32,
-    broker_connection_retry: bool,
-    broker_connection_max_retries: u32,
-    broker_connection_retry_delay: u32,
+    /// Celery common configuration
+    config: CeleryConfig,
 }
 
-impl<B> Celery<B>
+impl<B, D> Celery<B, D>
 where
     B: Broker + 'static,
+    D: Backend + 'static,
 {
     /// Get a [`CeleryBuilder`] for creating a [`Celery`] app with a custom configuration.
-    pub fn builder(name: &str, broker_url: &str) -> CeleryBuilder<B::Builder> {
-        CeleryBuilder::<B::Builder>::new(name, broker_url)
+    pub fn builder(name: &str, broker_url: String) -> CeleryBuilder<B, D> {
+        CeleryBuilder::<B, D>::new(name, broker_url)
     }
 
     /// Print a pretty ASCII art logo and configuration settings.
@@ -298,6 +239,8 @@ where
         // Broker.
         println!("{}", "[broker]".bold());
         println!(" {}", self.broker.safe_url());
+        println!("{}", "[backend]".bold());
+        println!(" {}", self.backend.safe_url());
         println!();
 
         // Registered tasks.
@@ -314,10 +257,11 @@ where
         &self,
         mut task_sig: Signature<T>,
     ) -> Result<AsyncResult, CeleryError> {
-        task_sig.options.update(&self.task_options);
+        task_sig.options.update(&self.config.task.options);
         let maybe_queue = task_sig.queue.take();
         let queue = maybe_queue.as_deref().unwrap_or_else(|| {
-            crate::routing::route(T::NAME, &self.task_routes).unwrap_or(&self.default_queue)
+            crate::routing::route(T::NAME, &self.task_routes)
+                .unwrap_or(&self.config.broker.default_queue)
         });
         let message = Message::try_from(task_sig)?;
         info!(
@@ -336,7 +280,7 @@ where
         if task_trace_builders.contains_key(T::NAME) {
             Err(CeleryError::TaskRegistrationError(T::NAME.into()))
         } else {
-            task_trace_builders.insert(T::NAME.into(), Box::new(build_tracer::<T>));
+            task_trace_builders.insert(T::NAME.into(), Box::new(build_tracer::<T, D>));
             debug!("Registered task {}", T::NAME);
             Ok(())
         }
@@ -346,13 +290,17 @@ where
         &self,
         message: Message,
         event_tx: UnboundedSender<TaskEvent>,
-    ) -> Result<Box<dyn TracerTrait>, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<Box<dyn TracerTrait<D>>, Box<dyn Error + Send + Sync + 'static>> {
         let task_trace_builders = self.task_trace_builders.read().await;
         if let Some(build_tracer) = task_trace_builders.get(&message.headers.task) {
-            Ok(
-                build_tracer(message, self.task_options, event_tx, self.hostname.clone())
-                    .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync + 'static>)?,
-            )
+            (build_tracer(
+                message,
+                self.config.task.options,
+                self.backend.clone(),
+                event_tx,
+                self.hostname.clone(),
+            ) as TraceBuilderResult<D>)
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync + 'static>)
         } else {
             Err(
                 Box::new(CeleryError::UnregisteredTaskError(message.headers.task))
@@ -481,7 +429,7 @@ where
 
     /// Consume tasks from the default queue.
     pub async fn consume(self: &Arc<Self>) -> Result<(), CeleryError> {
-        let queues = &[&self.default_queue.clone()[..]];
+        let queues = &[&self.config.broker.default_queue.clone()[..]];
         Self::consume_from(self, queues).await
     }
 
@@ -489,7 +437,7 @@ where
     pub async fn consume_from(self: &Arc<Self>, queues: &[&str]) -> Result<(), CeleryError> {
         loop {
             let result = self.clone()._consume_from(queues).await;
-            if !self.broker_connection_retry {
+            if !self.config.broker.connection_retry {
                 return result;
             }
 
@@ -509,14 +457,18 @@ where
             }
 
             let mut reconnect_successful: bool = false;
-            for _ in 0..self.broker_connection_max_retries {
+            for _ in 0..self.config.broker.connection_max_retries {
                 info!("Trying to re-establish connection with broker");
                 time::sleep(Duration::from_secs(
-                    self.broker_connection_retry_delay as u64,
+                    self.config.broker.connection_retry_delay as u64,
                 ))
                 .await;
 
-                match self.broker.reconnect(self.broker_connection_timeout).await {
+                match self
+                    .broker
+                    .reconnect(self.config.broker.connection_timeout)
+                    .await
+                {
                     Err(err) => {
                         if err.is_connection_error() {
                             continue;
@@ -621,7 +573,7 @@ where
                         return Err(broker_error.into());
                     }
                 }
-            };
+            }
         }
 
         // Cancel consumers.
@@ -655,7 +607,7 @@ where
                             }
                         }
                     },
-                };
+                }
             }
         }
 

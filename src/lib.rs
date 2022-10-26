@@ -89,11 +89,16 @@
 mod app;
 mod routing;
 pub use app::{Celery, CeleryBuilder};
+pub mod backend;
 pub mod beat;
 pub mod broker;
+pub mod config;
 pub mod error;
+pub mod kombu_serde;
 pub mod prelude;
 pub mod protocol;
+pub mod result;
+pub mod states;
 pub mod task;
 
 #[cfg(feature = "codegen")]

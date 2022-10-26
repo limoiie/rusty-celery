@@ -1,7 +1,9 @@
+use std::collections::BinaryHeap;
+
+use crate::error::BeatError;
+
 /// This module contains the definition of application-provided scheduler backends.
 use super::scheduled_task::ScheduledTask;
-use crate::error::BeatError;
-use std::collections::BinaryHeap;
 
 /// A `SchedulerBackend` is in charge of keeping track of the internal state of the scheduler
 /// according to some source of truth, such as a database.
@@ -9,7 +11,9 @@ use std::collections::BinaryHeap;
 /// The default scheduler backend, [`LocalSchedulerBackend`](struct.LocalSchedulerBackend.html),
 /// doesn't do any external synchronization, so the source of truth is just the locally defined
 /// schedules.
-pub trait SchedulerBackend {
+pub trait SchedulerBackend : Sized {
+    type Builder: SchedulerBackendBuilder<Self>;
+
     /// Check whether the internal state of the scheduler should be synchronized.
     /// If this method returns `true`, then `sync` will be called as soon as possible.
     fn should_sync(&self) -> bool;
@@ -29,6 +33,11 @@ pub trait SchedulerBackend {
     // and the backend has access to that.
 }
 
+pub trait SchedulerBackendBuilder<SB: SchedulerBackend> {
+    fn new() -> Self;
+    fn build(self) -> SB;
+}
+
 /// The default [`SchedulerBackend`](trait.SchedulerBackend.html).
 pub struct LocalSchedulerBackend {}
 
@@ -40,6 +49,8 @@ impl LocalSchedulerBackend {
 }
 
 impl SchedulerBackend for LocalSchedulerBackend {
+    type Builder = LocalSchedulerBackendBuilder;
+
     fn should_sync(&self) -> bool {
         false
     }
@@ -47,5 +58,18 @@ impl SchedulerBackend for LocalSchedulerBackend {
     #[allow(unused_variables)]
     fn sync(&mut self, scheduled_tasks: &mut BinaryHeap<ScheduledTask>) -> Result<(), BeatError> {
         unimplemented!()
+    }
+}
+
+/// The builder for [`SchedulerBackend`](trait.SchedulerBackend.html).
+pub struct LocalSchedulerBackendBuilder {}
+
+impl SchedulerBackendBuilder<LocalSchedulerBackend> for LocalSchedulerBackendBuilder {
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn build(self) -> LocalSchedulerBackend {
+        LocalSchedulerBackend {}
     }
 }
