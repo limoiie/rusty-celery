@@ -3,6 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use celery::broker::Broker;
 use celery::broker::RedisBroker;
+use celery::config::{ConfigBroker, ConfigTask};
 use celery::error::TaskError;
 use celery::task::{Request, Signature, Task, TaskOptions};
 use once_cell::sync::Lazy;

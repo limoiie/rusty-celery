@@ -1,5 +1,6 @@
 use super::Celery;
 use crate::broker::mock::MockBroker;
+use crate::config::ConfigTask;
 use crate::protocol::MessageContentType;
 use crate::task::{Request, Signature, Task, TaskOptions, TaskResult};
 use async_trait::async_trait;
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 async fn build_basic_app() -> Celery<MockBroker> {
-    let celery = Celery::<MockBroker>::builder("mock-app", "mock://localhost:8000")
+    let celery = Celery::<MockBroker>::builder("mock-app", "mock://localhost:8000".into())
         .build()
         .await
         .unwrap();
@@ -18,7 +19,7 @@ async fn build_basic_app() -> Celery<MockBroker> {
 }
 
 async fn build_configured_app() -> Celery<MockBroker> {
-    let celery = Celery::<MockBroker>::builder("mock-app", "mock://localhost:8000")
+    let celery = Celery::<MockBroker>::builder("mock-app", "mock://localhost:8000".into())
         .task_time_limit(10)
         .task_max_retries(100)
         .task_content_type(MessageContentType::Yaml)

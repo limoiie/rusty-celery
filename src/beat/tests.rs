@@ -1,18 +1,22 @@
 #![allow(clippy::unit_arg)]
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::SystemTime;
+
+use async_trait::async_trait;
+use tokio::time::{self, Duration};
+
+use crate::{
+    broker::mock::*,
+    task::{Request, TaskOptions, TaskResult},
+};
+
 /// NOTE: Some tests in this module are time-sensitive.
 ///
 /// Errors in the order of 1-2 milliseconds are expected, so checks
 /// are written to have a tolerance of at least 10 milliseconds.
 use super::*;
-use crate::{
-    broker::mock::*,
-    task::{Request, TaskOptions, TaskResult},
-};
-use async_trait::async_trait;
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::SystemTime;
-use tokio::time::{self, Duration};
 
 /// We test that a task is sent to the correct queue and executed
 /// the correct amount of times. We also check that executions are
@@ -25,19 +29,7 @@ async fn test_task_with_delta_schedule() {
     // Configure a dummy queue for the tasks.
     let task_routes = vec![Rule::new("dummy_*", "dummy_queue").unwrap()];
 
-    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = Beat {
-        name: "dummy_beat".to_string(),
-        scheduler: Scheduler::new(dummy_broker),
-        scheduler_backend: LocalSchedulerBackend::new(),
-        task_routes,
-        default_queue: "celery".to_string(),
-        task_options: TaskOptions::default(),
-        broker_connection_timeout: 5,
-        broker_connection_retry: true,
-        broker_connection_max_retries: 5,
-        broker_connection_retry_delay: 5,
-        max_sleep_duration: None,
-    };
+    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = mock_beat(dummy_broker, task_routes);
 
     beat.schedule_task(
         Signature::<DummyTask>::new(()),
@@ -88,19 +80,7 @@ async fn test_scheduling_two_tasks() {
         Rule::new("dummy_task2", "dummy_queue2").unwrap(),
         Rule::new("dummy_*", "dummy_queue").unwrap(),
     ];
-    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = Beat {
-        name: "dummy_beat".to_string(),
-        scheduler: Scheduler::new(dummy_broker),
-        scheduler_backend: LocalSchedulerBackend::new(),
-        task_routes,
-        default_queue: "celery".to_string(),
-        task_options: TaskOptions::default(),
-        broker_connection_timeout: 5,
-        broker_connection_retry: true,
-        broker_connection_max_retries: 5,
-        broker_connection_retry_delay: 5,
-        max_sleep_duration: None,
-    };
+    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = mock_beat(dummy_broker, task_routes);
 
     beat.schedule_task(
         Signature::<DummyTask>::new(()),
@@ -160,19 +140,7 @@ async fn test_task_with_delayed_first_run() {
     // Create a dummy beat for this test.
     let dummy_broker = MockBroker::new();
     let task_routes = vec![Rule::new("*", "dummy_queue").unwrap()];
-    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = Beat {
-        name: "dummy_beat".to_string(),
-        scheduler: Scheduler::new(dummy_broker),
-        scheduler_backend: LocalSchedulerBackend::new(),
-        task_routes,
-        default_queue: "celery".to_string(),
-        task_options: TaskOptions::default(),
-        broker_connection_timeout: 5,
-        broker_connection_retry: true,
-        broker_connection_max_retries: 5,
-        broker_connection_retry_delay: 5,
-        max_sleep_duration: None,
-    };
+    let mut beat: Beat<MockBroker, LocalSchedulerBackend> = mock_beat(dummy_broker, task_routes);
 
     // Schedule a task that will not execute immediately.
     beat.schedule_task(Signature::<DummyTask>::new(()), TenMillisSchedule {});
@@ -218,6 +186,8 @@ async fn test_beat_max_sleep_duration() {
     }
 
     impl SchedulerBackend for DummySchedulerBackend {
+        type Builder = DummySchedulerBackendBuilder;
+
         fn should_sync(&self) -> bool {
             true
         }
@@ -231,6 +201,18 @@ async fn test_beat_max_sleep_duration() {
         }
     }
 
+    struct DummySchedulerBackendBuilder {}
+
+    impl SchedulerBackendBuilder<DummySchedulerBackend> for DummySchedulerBackendBuilder {
+        fn new() -> Self {
+            unimplemented!()
+        }
+
+        fn build(self) -> DummySchedulerBackend {
+            unimplemented!()
+        }
+    }
+
     // Create a dummy beat for this test.
     let dummy_broker = MockBroker::new();
     let mut beat: Beat<MockBroker, DummySchedulerBackend> = Beat {
@@ -240,13 +222,25 @@ async fn test_beat_max_sleep_duration() {
             num_sync_calls: Rc::clone(&num_sync_calls),
         },
         task_routes: vec![],
-        default_queue: "celery".to_string(),
-        task_options: TaskOptions::default(),
-        broker_connection_timeout: 5,
-        broker_connection_retry: true,
-        broker_connection_max_retries: 5,
-        broker_connection_retry_delay: 5,
-        max_sleep_duration: Some(max_sleep_duration),
+        config: BeatConfig {
+            task: TaskConfig {
+                options: Default::default(),
+                routes: vec![],
+            },
+            broker: BrokerConfig {
+                url: "".to_string(),
+                default_queue: "celery".to_string(),
+                prefetch_count: None,
+                heartbeat: None,
+                connection_timeout: 5,
+                connection_retry: true,
+                connection_max_retries: 5,
+                connection_retry_delay: 5,
+            },
+            scheduler: SchedulerConfig {
+                max_sleep_duration: Some(max_sleep_duration),
+            },
+        },
     };
 
     let result = time::timeout(test_timeout, beat.start()).await;
@@ -315,5 +309,33 @@ impl Task for DummyTask2 {
 
     async fn run(&self, _params: Self::Params) -> TaskResult<Self::Returns> {
         unimplemented!()
+    }
+}
+
+fn mock_beat<B: Broker>(dummy_broker: B, task_routes: Vec<Rule>) -> Beat<B, LocalSchedulerBackend> {
+    Beat {
+        name: "dummy_beat".to_string(),
+        scheduler: Scheduler::new(dummy_broker),
+        scheduler_backend: LocalSchedulerBackend::new(),
+        task_routes,
+        config: BeatConfig {
+            task: TaskConfig {
+                options: Default::default(),
+                routes: vec![],
+            },
+            broker: BrokerConfig {
+                url: "".to_string(),
+                default_queue: "celery".to_string(),
+                prefetch_count: None,
+                heartbeat: None,
+                connection_timeout: 5,
+                connection_retry: true,
+                connection_max_retries: 5,
+                connection_retry_delay: 5,
+            },
+            scheduler: SchedulerConfig {
+                max_sleep_duration: None,
+            },
+        },
     }
 }
