@@ -92,8 +92,8 @@ pub trait ConfigBroker: Sized {
     fn get_broker_config(&mut self) -> &mut BrokerConfig;
 
     /// Set url for connecting to the broker.
-    fn broker_url(mut self, url: String) -> Self {
-        self.get_broker_config().url = url;
+    fn broker_url(mut self, url: &str) -> Self {
+        self.get_broker_config().url = url.to_string();
         self
     }
 
@@ -157,8 +157,8 @@ pub trait ConfigBackend: Sized {
     fn get_backend_config(&mut self) -> &mut BackendConfig;
 
     /// Set url for connecting to the backend.
-    fn backend_url(mut self, url: String) -> Self {
-        self.get_backend_config().url = url;
+    fn backend_url(mut self, url: &str) -> Self {
+        self.get_backend_config().url = url.to_string();
         self
     }
 

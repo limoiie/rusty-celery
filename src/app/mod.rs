@@ -112,7 +112,7 @@ where
     D: Backend,
 {
     /// Get a [`CeleryBuilder`] for creating a [`Celery`] app with a custom configuration.
-    pub fn new(name: &str, broker_url: String) -> Self {
+    pub fn new(name: &str, broker_url: &str) -> Self {
         Self {
             name: name.into(),
             hostname: format!(
@@ -123,7 +123,7 @@ where
                     .and_then(|sys_hostname| sys_hostname.into_string().ok())
                     .unwrap_or_else(|| "unknown".into())
             ),
-            config: CeleryConfig::default(broker_url),
+            config: CeleryConfig::default(broker_url.to_string()),
             _builder_type: PhantomData::default(),
         }
     }
@@ -208,7 +208,7 @@ where
     D: Backend + 'static,
 {
     /// Get a [`CeleryBuilder`] for creating a [`Celery`] app with a custom configuration.
-    pub fn builder(name: &str, broker_url: String) -> CeleryBuilder<B, D> {
+    pub fn builder(name: &str, broker_url: &str) -> CeleryBuilder<B, D> {
         CeleryBuilder::<B, D>::new(name, broker_url)
     }
 

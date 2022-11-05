@@ -118,10 +118,10 @@ where
 {
     /// Get a `BeatBuilder` for creating a `Beat` app with a custom scheduler backend and
     /// a custom configuration.
-    pub fn new(name: &str, broker_url: String) -> Self {
+    pub fn new(name: &str, broker_url: &str) -> Self {
         Self {
             name: name.into(),
-            config: BeatConfig::default(broker_url),
+            config: BeatConfig::default(broker_url.to_string()),
             _modules_type: PhantomData::default(),
         }
     }
@@ -191,7 +191,7 @@ where
 {
     /// Get a `BeatBuilder` for creating a `Beat` app with a custom configuration and
     /// a custom scheduler backend.
-    pub fn builder(name: &str, broker_url: String) -> BeatBuilder<Br, Sb> {
+    pub fn builder(name: &str, broker_url: &str) -> BeatBuilder<Br, Sb> {
         BeatBuilder::<Br, Sb>::new(name, broker_url)
     }
 

@@ -12,9 +12,9 @@ macro_rules! __app_internal {
     ) => {{
         let mut builder = <
             $crate::Celery<$broker_type $( , $backend_type )?>
-        >::builder("celery", $broker_url);
+        >::builder("celery", &$broker_url);
 
-        $( builder = builder.backend_url($backend_url); )?
+        $( builder = builder.backend_url(&$backend_url); )?
         $( builder = builder.$x($y); )*
         $( builder = builder.task_route($pattern, $queue); )*
 
@@ -49,7 +49,7 @@ macro_rules! __beat_internal {
     ) => {{
         let mut builder = <
             $crate::beat::Beat::<$broker_type $( , $scheduler_backend_type )?>
-        >::builder("beat", $broker_url);
+        >::builder("beat", &$broker_url);
 
         $( builder = builder.$x($y); )*
         $( builder = builder.task_route($pattern, $queue); )*
