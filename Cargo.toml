@@ -3,7 +3,7 @@ members = ["./", "celery-codegen"]
 
 [package]
 name = "celery"
-version = "0.4.0-rcn.12"
+version = "0.4.0-rcn.12.1"
 authors = ["epwalsh <epwalsh10@gmail.com>"]
 edition = "2018"
 keywords = ["celery", "amqp", "rabbitmq", "background-jobs"]
@@ -44,7 +44,7 @@ futures = { version = "0.3", features = ["async-await"] }
 uuid = { version = "0.8", features = ["v4"]}
 url = { version = "2.3.1" }
 rand = "0.8"
-celery-codegen = { version = "0.4.0-rcn.12", path = "./celery-codegen", optional = true }
+celery-codegen = { version = "0.4.0-rcn.12.1", path = "./celery-codegen", optional = true }
 colored = "2"
 once_cell = { version = "1.3.1" }
 globset = "0.4"
