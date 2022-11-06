@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use bstr::ByteVec;
 
 use crate::backend::{
-    BaseBackendProtocol, BaseCached, BaseTranslator, Key, TaskId, TaskMeta, Traceback,
+    BaseBackendProtocol, BaseCached, BaseTranslator, Key, StoreOption, TaskId, TaskMeta,
 };
 use crate::kombu_serde::AnyValue;
 use crate::states::State;
-use crate::task::{Request, Task};
+use crate::task::Task;
 
 use super::BackendBuilder;
 
@@ -73,24 +73,28 @@ where
 {
     type Builder = B::Builder;
 
-    async fn _store_result_wrapped_as_task_meta<T: Task>(
+    async fn _store_result<T>(
         &self,
         task_id: &TaskId,
         data: AnyValue,
-        state: State,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-    ) {
-        let task_meta =
-            Self::__make_task_meta(task_id.clone(), data, state, traceback, request).await;
+        status: State,
+        option: &StoreOption<T>,
+    ) where
+        T: Task,
+    {
+        let task_meta = Self::__make_task_meta(task_id.clone(), data, status, option).await;
 
         let remote_task_meta = self.__fetch_task_meta_by(task_id).await;
-        if remote_task_meta.status != State::SUCCESS {
+        if !remote_task_meta.status.is_successful() {
             let data = self.encode(&task_meta);
             log::debug!("Store task meta: {}", data);
 
-            self._set_with_state(self.get_key_for_task(task_id, None), data.as_bytes(), state)
-                .await;
+            self._set_with_state(
+                self.get_key_for_task(task_id, None),
+                data.as_bytes(),
+                status,
+            )
+            .await;
         }
     }
 

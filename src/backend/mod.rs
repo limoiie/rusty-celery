@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::MutexGuard;
+use typed_builder::TypedBuilder;
 
 use crate::error::{BackendError, TaskError, TraceError};
 use crate::kombu_serde::{AnyValue, SerializerKind};
@@ -27,6 +28,69 @@ type Key = String;
 
 pub type TaskResult<D> = Result<D, Exc>;
 pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
+
+#[derive(Clone, Default)]
+pub struct StoreOption<'request, T: Task> {
+    traceback: Option<Traceback>,
+    request: Option<&'request Request<T>>,
+}
+
+impl<'require, T: Task> StoreOption<'require, T> {
+    pub fn with_request(request: &'require Request<T>) -> Self {
+        Self {
+            traceback: None,
+            request: Some(request),
+        }
+    }
+}
+
+#[derive(TypedBuilder)]
+pub struct MarkStartOption<'request, T: Task> {
+    #[builder(default = State::STARTED)]
+    status: State,
+    meta: HashMap<String, String>,
+    store: StoreOption<'request, T>,
+}
+
+#[derive(TypedBuilder)]
+pub struct MarkDoneOption<'returns, 'request, T: Task> {
+    #[builder(default = State::SUCCESS)]
+    status: State,
+    result: &'returns T::Returns,
+    #[builder(default = true)]
+    store_result: bool,
+    store: StoreOption<'request, T>,
+}
+
+#[derive(TypedBuilder)]
+pub struct MarkFailureOption<'request, T: Task> {
+    #[builder(default = State::FAILURE)]
+    status: State,
+    exc: Exc,
+    #[builder(default = false)]
+    call_errbacks: bool,
+    #[builder(default = true)]
+    store_result: bool,
+    store: StoreOption<'request, T>,
+}
+
+#[derive(TypedBuilder)]
+pub struct MarkRevokeOption<'request, T: Task> {
+    #[builder(default = State::REVOKED)]
+    status: State,
+    reason: String,
+    #[builder(default = true)]
+    store_result: bool,
+    store: StoreOption<'request, T>,
+}
+
+#[derive(TypedBuilder)]
+pub struct MarkRetryOption<'request, T: Task> {
+    #[builder(default = State::RETRY)]
+    status: State,
+    exc: Exc,
+    store: StoreOption<'request, T>,
+}
 
 #[async_trait]
 pub trait Backend: Send + Sync + Sized {
@@ -70,126 +134,114 @@ pub trait Backend: Send + Sync + Sized {
         }
     }
 
-    async fn mark_as_started<T: Task>(
-        &self,
-        task_id: &TaskId,
-        meta: HashMap<String, String>,
-        request: Option<&Request<T>>,
-    ) {
-        let data = Ok(meta);
-        self.store_result_wrapped_as_task_meta(task_id, data, State::STARTED, None, request)
+    async fn mark_as_started<'s, T>(&'s self, task_id: &TaskId, option: MarkStartOption<'s, T>)
+    where
+        T: Task,
+    {
+        let data = Ok(option.meta);
+        self.store_result(task_id, data, option.status, &option.store)
             .await
     }
 
-    async fn mark_as_done<T: Task>(
-        &self,
-        task_id: &TaskId,
-        result: &T::Returns,
-        request: Option<&Request<T>>,
-        store_result: bool,
-        state: Option<State>,
-    ) {
-        let state = state.unwrap_or(State::SUCCESS);
-        let data = Ok(result);
+    async fn mark_as_done<'s, 'r, T>(&'s self, task_id: &TaskId, option: MarkDoneOption<'s, 'r, T>)
+    where
+        T: Task,
+    {
+        let data = Ok(option.result);
 
-        if store_result && !request.map(|r| r.ignore_result).unwrap_or(false) {
-            self.store_result_wrapped_as_task_meta(task_id, data.clone(), state, None, request)
+        if option.store_result
+            && !option
+                .store
+                .request
+                .map(|r| r.ignore_result)
+                .unwrap_or(false)
+        {
+            self.store_result(task_id, data.clone(), option.status, &option.store)
                 .await;
         }
 
-        if let Some(request) = request {
+        if let Some(request) = option.store.request {
             if request.chord.is_some() {
-                self.on_chord_part_return(request, state, data).await
+                self.on_chord_part_return(request, option.status, data)
+                    .await
             }
         }
     }
 
-    async fn mark_as_failure<T: Task>(
-        &self,
-        task_id: &TaskId,
-        exc: Exc,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-        store_result: bool,
-        call_errbacks: bool,
-        state: Option<State>,
-    ) {
-        let state = state.unwrap_or(State::FAILURE);
-        let err = TaskResult::<()>::Err(exc);
+    async fn mark_as_failure<'s, T>(&'s self, task_id: &TaskId, option: MarkFailureOption<'s, T>)
+    where
+        T: Task,
+    {
+        let err = TaskResult::<()>::Err(option.exc);
 
-        if store_result {
-            self.store_result_wrapped_as_task_meta(task_id, err.clone(), state, traceback, request)
+        if option.store_result {
+            self.store_result(task_id, err.clone(), option.status, &option.store)
                 .await;
         }
 
-        if let Some(request) = request {
+        if let Some(request) = option.store.request {
             if request.chord.is_some() {
-                self.on_chord_part_return(request, state, err).await
+                self.on_chord_part_return(request, option.status, err).await
             }
 
             // todo: chain elem ctx -> store_result
-            if call_errbacks {
+            if option.call_errbacks {
                 // todo: call err callbacks
             }
         }
     }
 
-    async fn mark_as_revoked<T: Task>(
-        &self,
-        task_id: &TaskId,
-        reason: String,
-        request: Option<&Request<T>>,
-        store_result: bool,
-        state: Option<State>,
-    ) {
-        let exc = TraceError::TaskError(TaskError::RevokedError(reason));
+    async fn mark_as_revoked<'s, T>(&'s self, task_id: &TaskId, option: MarkRevokeOption<'s, T>)
+    where
+        T: Task,
+    {
+        let exc = TraceError::TaskError(TaskError::RevokedError(option.reason));
         let err = TaskResult::<()>::Err(exc);
-        let state = state.unwrap_or(State::REVOKED);
 
-        if store_result {
-            self.store_result_wrapped_as_task_meta(task_id, err.clone(), state, None, request)
+        if option.store_result {
+            self.store_result(task_id, err.clone(), option.status, &option.store)
                 .await;
         }
 
-        if let Some(request) = request {
+        if let Some(request) = option.store.request {
             if request.chord.is_some() {
-                self.on_chord_part_return(request, state, err).await
+                self.on_chord_part_return(request, option.status, err).await
             }
         }
     }
 
-    async fn mark_as_retry<T: Task>(
-        &self,
-        task_id: &TaskId,
-        exc: Exc,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-        state: Option<State>,
-    ) {
-        let err = TaskResult::<()>::Err(exc);
-        let state = state.unwrap_or(State::RETRY);
+    async fn mark_as_retry<'s, T>(&'s self, task_id: &TaskId, option: MarkRetryOption<'s, T>)
+    where
+        T: Task,
+    {
+        let err = TaskResult::<()>::Err(option.exc);
 
-        self.store_result_wrapped_as_task_meta(task_id, err, state, traceback, request)
+        self.store_result(task_id, err, option.status, &option.store)
             .await;
     }
 
     async fn forget(&self, task_id: &TaskId);
 
-    async fn store_result_wrapped_as_task_meta<D: Serialize + Send + Sync, T: Task>(
+    async fn store_result<D, T>(
         &self,
         task_id: &TaskId,
         result: TaskResult<D>,
-        state: State,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-    );
+        status: State,
+        store: &StoreOption<T>,
+    ) where
+        D: Serialize + Send + Sync,
+        T: Task;
 
-    async fn on_chord_part_return<T: Task, D: Serialize + Send + Sync>(
+    #[allow(unused)]
+    async fn on_chord_part_return<T, D>(
         &self,
-        _request: &Request<T>,
-        _state: State,
-        _result: TaskResult<D>,
-    ) {
+        request: &Request<T>,
+        state: State,
+        result: TaskResult<D>,
+    ) where
+        T: Task,
+        D: Serialize + Send + Sync,
+    {
         // no-op
     }
 
@@ -413,13 +465,12 @@ pub trait BaseCached: Send + Sync + Sized {
 pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
     type Builder: BackendBuilder<Backend = Self>;
 
-    async fn _store_result_wrapped_as_task_meta<T: Task>(
+    async fn _store_result<T: Task>(
         &self,
         task_id: &TaskId,
         data: AnyValue,
-        state: State,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
+        status: State,
+        option: &StoreOption<T>,
     );
 
     async fn __forget_task_meta_by(&self, task_id: &TaskId);
@@ -444,13 +495,15 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
         return meta;
     }
 
-    async fn __make_task_meta<T: Task>(
+    async fn __make_task_meta<T>(
         task_id: TaskId,
         result: AnyValue,
         status: State,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-    ) -> TaskMeta {
+        option: &StoreOption<T>,
+    ) -> TaskMeta
+    where
+        T: Task,
+    {
         let date_done = if status.is_ready() {
             Some(DateTime::<Utc>::from(std::time::SystemTime::now()).to_rfc3339())
         } else {
@@ -461,18 +514,18 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
             task_id,
             status,
             result,
-            traceback,
+            traceback: option.traceback,
             children: vec![/* todo */],
             date_done,
-            group_id: request.and_then(|r| r.group.clone()),
+            group_id: option.request.and_then(|r| r.group.clone()),
             parent_id: None,
             // todo: assign request properties to following fields
             name: None,
             args: None,
             kwargs: None,
-            worker: request.and_then(|r| r.hostname.clone()),
-            retries: request.map(|r| r.retries),
-            queue: request.and_then(|r| r.reply_to.clone()),
+            worker: option.request.and_then(|r| r.hostname.clone()),
+            retries: option.request.map(|r| r.retries),
+            queue: option.request.and_then(|r| r.reply_to.clone()),
         }
     }
 
@@ -506,17 +559,18 @@ impl<B: BaseBackendProtocol> Backend for B {
         self.__forget_task_meta_by(task_id).await
     }
 
-    async fn store_result_wrapped_as_task_meta<D: Serialize + Send + Sync, T: Task>(
+    async fn store_result<D, T>(
         &self,
         task_id: &TaskId,
         result: TaskResult<D>,
-        state: State,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-    ) {
-        let data = self.prepare_result(result, state);
-        self._store_result_wrapped_as_task_meta(task_id, data, state, traceback, request)
-            .await;
+        status: State,
+        option: &StoreOption<T>,
+    ) where
+        D: Serialize + Send + Sync,
+        T: Task,
+    {
+        let data = self.prepare_result(result, status);
+        self._store_result(task_id, data, status, option).await;
     }
 }
 

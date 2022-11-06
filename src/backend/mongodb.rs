@@ -1,11 +1,11 @@
 use crate::backend::{
-    BackendBuilder, BaseBackendProtocol, BaseCached, BaseTranslator, TaskId, TaskMeta, Traceback,
+    BackendBuilder, BaseBackendProtocol, BaseCached, BaseTranslator, StoreOption, TaskId, TaskMeta,
+    Traceback,
 };
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, SerializerKind};
 use crate::prelude::Task;
 use crate::states::State;
-use crate::task::Request;
 use async_trait::async_trait;
 use chrono::Duration;
 use mongodb::bson::{doc, DateTime};
@@ -189,16 +189,17 @@ impl BaseTranslator for MongoDbBackend {
 impl BaseBackendProtocol for MongoDbBackend {
     type Builder = MongoDbBackendBuilder;
 
-    async fn _store_result_wrapped_as_task_meta<T: Task>(
+    async fn _store_result<T>(
         &self,
         task_id: &TaskId,
         data: AnyValue,
-        state: State,
-        traceback: Option<Traceback>,
-        request: Option<&Request<T>>,
-    ) {
+        status: State,
+        option: &StoreOption<T>,
+    ) where
+        T: Task,
+    {
         let task_meta = MongoTaskMeta::from_task_meta(
-            Self::__make_task_meta(task_id.clone(), data, state, traceback, request).await,
+            Self::__make_task_meta(task_id.clone(), data, status, option).await,
             self.serializer(),
         );
 

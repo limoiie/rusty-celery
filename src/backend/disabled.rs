@@ -2,12 +2,11 @@ use async_trait::async_trait;
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{Backend, BackendBuilder, TaskId, TaskMeta, TaskResult, Traceback};
+use crate::backend::{Backend, BackendBuilder, StoreOption, TaskId, TaskMeta, TaskResult};
 use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
 use crate::prelude::Task;
 use crate::states::State;
-use crate::task::Request;
 
 pub struct DisabledBackend {}
 
@@ -42,29 +41,35 @@ impl Backend for DisabledBackend {
         "#[disabled!]#".to_owned()
     }
 
-    async fn get_task_meta(&self, _task_id: &TaskId, _cache: bool) -> TaskMeta {
+    #[allow(unused)]
+    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         unreachable!("Backend is disabled!")
     }
 
-    fn recover_result_by_meta<D>(&self, _task_meta: TaskMeta) -> Option<TaskResult<D>>
+    #[allow(unused)]
+    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
         unreachable!("Backend is disabled!")
     }
 
-    async fn forget(&self, _task_id: &TaskId) {
+    #[allow(unused)]
+    async fn forget(&self, task_id: &TaskId) {
         unreachable!("Backend is disabled!")
     }
 
-    async fn store_result_wrapped_as_task_meta<D: Serialize + Send + Sync, T: Task>(
+    #[allow(unused)]
+    async fn store_result<D, T>(
         &self,
-        _task_id: &TaskId,
-        _result: TaskResult<D>,
-        _state: State,
-        _traceback: Option<Traceback>,
-        _request: Option<&Request<T>>,
-    ) {
+        task_id: &TaskId,
+        result: TaskResult<D>,
+        state: State,
+        store: &StoreOption<T>,
+    ) where
+        D: Serialize + Send + Sync,
+        T: Task,
+    {
         // nothing to do
     }
 }

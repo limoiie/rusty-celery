@@ -7,7 +7,9 @@ use log::{debug, error, info, warn};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Duration, Instant};
 
-use crate::backend::Backend;
+use crate::backend::{
+    Backend, MarkDoneOption, MarkFailureOption, MarkRetryOption, MarkStartOption, StoreOption,
+};
 use crate::error::{ProtocolError, TaskError, TraceError};
 use crate::protocol::Message;
 use crate::task::{Request, Task, TaskEvent, TaskOptions, TaskStatus};
@@ -45,7 +47,11 @@ where
             info!("Task {}[{}] received", task.name(), task.request().id);
         }
 
-        Self { task, backend, event_tx }
+        Self {
+            task,
+            backend,
+            event_tx,
+        }
     }
 }
 
@@ -60,11 +66,7 @@ where
         let publish_result = !self.task.request().ignore_result;
 
         if self.is_expired() {
-            warn!(
-                "Task {}[{}] expired, discarding",
-                self.task.name(),
-                &self.task.request().id,
-            );
+            warn!("Task {}[{}] expired, discarding", self.task.name(), &uuid,);
             return Err(TraceError::ExpirationError);
         }
 
@@ -79,14 +81,16 @@ where
         self.backend
             .mark_as_started(
                 uuid,
-                HashMap::from([
-                    ("pid".to_owned(), std::process::id().to_string()),
-                    (
-                        "hostname".to_owned(),
-                        self.task.request().hostname.as_ref().unwrap().to_string(),
-                    ),
-                ]),
-                Some(self.task.request()),
+                MarkStartOption::builder()
+                    .meta(HashMap::from([
+                        ("pid".to_owned(), std::process::id().to_string()),
+                        (
+                            "hostname".to_owned(),
+                            self.task.request().hostname.as_ref().unwrap().into(),
+                        ),
+                    ]))
+                    .store(StoreOption::with_request(self.task.request()))
+                    .build(),
             )
             .await;
 
@@ -125,10 +129,11 @@ where
                 self.backend
                     .mark_as_done(
                         uuid,
-                        &returned,
-                        Some(self.task.request()),
-                        publish_result,
-                        None,
+                        MarkDoneOption::builder()
+                            .result(&returned)
+                            .store_result(publish_result)
+                            .store(StoreOption::with_request(self.task.request()))
+                            .build(),
                     )
                     .await;
 
@@ -193,20 +198,22 @@ where
                         error!("Failed sending task event");
                     });
 
-                if !should_retry {
-                    self.backend
-                        .mark_as_failure(
-                            uuid,
-                            TraceError::TaskError(e.clone()),
-                            None,
-                            Some(self.task.request()),
-                            true,
-                            false,
-                            None,
-                        )
-                        .await;
+                let exc = TraceError::TaskError(e.clone());
+                let mark_as_failure = || {
+                    self.backend.mark_as_failure(
+                        uuid,
+                        MarkFailureOption::builder()
+                            .exc(exc.clone())
+                            .store(StoreOption::with_request(self.task.request()))
+                            .store_result(true)
+                            .call_errbacks(false)
+                            .build(),
+                    )
+                };
 
-                    return Err(TraceError::TaskError(e));
+                if !should_retry {
+                    mark_as_failure().await;
+                    return Err(exc);
                 }
 
                 let retries = self.task.request().retries;
@@ -218,19 +225,8 @@ where
                             &self.task.request().id,
                         );
 
-                        self.backend
-                            .mark_as_failure(
-                                uuid,
-                                TraceError::TaskError(e.clone()),
-                                None,
-                                Some(self.task.request()),
-                                true,
-                                false,
-                                None,
-                            )
-                            .await;
-
-                        return Err(TraceError::TaskError(e));
+                        mark_as_failure().await;
+                        return Err(exc);
                     }
                     info!(
                         "Task {}[{}] retrying ({} / {})",
@@ -251,10 +247,10 @@ where
                 self.backend
                     .mark_as_retry(
                         uuid,
-                        TraceError::TaskError(e),
-                        None,
-                        Some(self.task.request()),
-                        None,
+                        MarkRetryOption::builder()
+                            .exc(exc)
+                            .store(StoreOption::with_request(self.task.request()))
+                            .build(),
                     )
                     .await;
 
@@ -305,7 +301,13 @@ pub(super) trait TracerTrait<D: Backend>: Send + Sync {
 pub(super) type TraceBuilderResult<D> = Result<Box<dyn TracerTrait<D>>, ProtocolError>;
 
 pub(super) type TraceBuilder<D> = Box<
-    dyn Fn(Message, TaskOptions, Arc<D>, UnboundedSender<TaskEvent>, String) -> TraceBuilderResult<D>
+    dyn Fn(
+            Message,
+            TaskOptions,
+            Arc<D>,
+            UnboundedSender<TaskEvent>,
+            String,
+        ) -> TraceBuilderResult<D>
         + Send
         + Sync
         + 'static,
