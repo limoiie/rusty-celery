@@ -1,21 +1,24 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 
+use crate::backend::common::basic_layer::BackendBasic;
+use crate::config::BackendConfig;
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::MutexGuard;
 use typed_builder::TypedBuilder;
 
 use crate::error::{BackendError, TaskError, TraceError};
-use crate::kombu_serde::{AnyValue, SerializerKind};
 use crate::states::State;
 use crate::task::{Request, Task};
 
+pub use self::common::basic_layer::BackendBasicLayer;
+pub use self::common::protocol_layer::BackendProtocolLayer;
+pub use self::common::serde_layer::BackendSerdeLayer;
+pub use self::common::task_meta::TaskMeta;
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
 pub use self::mongodb::{MongoDbBackend, MongoDbBackendBuilder};
 pub use self::redis::{RedisBackend, RedisBackendBuilder};
 
+mod common;
 mod disabled;
 mod key_value_store;
 mod mongodb;
@@ -24,7 +27,6 @@ mod redis;
 type Exc = TraceError;
 type TaskId = String;
 type Traceback = ();
-type Key = String;
 
 pub type TaskResult<D> = Result<D, Exc>;
 pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
@@ -273,310 +275,29 @@ pub trait Backend: Send + Sync + Sized {
 }
 
 #[async_trait]
-pub trait BackendBuilder {
+pub trait BackendBuilder: Sized {
     type Backend: Backend;
 
     fn new(backend_url: &str) -> Self;
 
-    fn result_serializer(self, kind: SerializerKind) -> Self;
+    fn backend_basic(&mut self) -> &mut BackendBasic;
 
-    fn result_expires(self, expiration: Option<Duration>) -> Self;
-
-    async fn build(&self) -> Result<Self::Backend, BackendError>;
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct GeneralError {
-    exc_type: String,
-    exc_message: String,
-    exc_module: String,
-}
-
-pub trait BaseTranslator: Send + Sync + Sized {
-    fn serializer(&self) -> SerializerKind;
-
-    fn encode<D: Serialize>(&self, data: &D) -> String {
-        self.serializer().dump(data).2
+    fn config(mut self, config: BackendConfig) -> Self {
+        self.backend_basic().result_serializer = config.result_serializer;
+        self.backend_basic().expiration_in_seconds =
+            config.result_expires.map(|d| d.num_seconds() as u32);
+        self.backend_basic().url = config.url;
+        self
     }
 
-    fn decode<D: for<'de> Deserialize<'de>>(&self, payload: String) -> D {
-        self.serializer().load(&payload)
-    }
-
-    fn prepare_result<D: Serialize>(&self, result: TaskResult<D>, state: State) -> AnyValue {
-        match result {
-            Ok(ref data) => self.prepare_value(data),
-            Err(ref err) if state.is_exception() => self.prepare_exception(err),
-            Err(_) => todo!(),
-        }
-    }
-
-    fn prepare_value<D: Serialize>(&self, result: &D) -> AnyValue {
-        // todo
-        //   if result is ResultBase {
-        //       result.as_tuple()
-        //   }
-        self.serializer().data_to_value(result)
-    }
-
-    fn prepare_exception(&self, exc: &Exc) -> AnyValue {
-        let (typ, msg, module) = match exc {
-            Exc::TaskError(err) => match err {
-                TaskError::ExpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
-                TaskError::UnexpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
-                TaskError::TimeoutError => ("TimeoutError", "", "celery.exceptions"),
-                TaskError::Retry(_time) => {
-                    ("RetryTaskError", "todo!" /*todo*/, "celery.exceptions")
-                }
-                TaskError::RevokedError(err) => ("RevokedError", err.as_str(), "celery.exceptions"),
-            },
-            Exc::ExpirationError => ("TaskError", "", "celery.exceptions"),
-            Exc::Retry(_time) => ("RetryTaskError", "todo!", "celery.exceptions"),
-        };
-
-        let exc_struct = GeneralError {
-            exc_type: typ.into(),
-            exc_message: msg.into(),
-            exc_module: module.into(),
-        };
-
-        self.serializer().data_to_value(&exc_struct)
-    }
-
-    fn recover_result<D>(&self, data: AnyValue, state: State) -> Option<TaskResult<D>>
-    where
-        D: for<'de> Deserialize<'de>,
-    {
-        match state {
-            _ if state.is_exception() => Some(Err(self.recover_exception(data))),
-            _ if state.is_successful() => Some(Ok(self.recover_value(data))),
-            _ => None,
-        }
-    }
-
-    fn recover_value<D>(&self, data: AnyValue) -> D
-    where
-        D: for<'de> Deserialize<'de>,
-    {
-        self.serializer().value_to_data(data).unwrap()
-    }
-
-    fn recover_exception(&self, data: AnyValue) -> Exc {
-        let err: GeneralError = self.serializer().value_to_data(data).unwrap();
-        match err.exc_type.as_str() {
-            "TaskError" => Exc::TaskError(TaskError::ExpectedError(err.exc_message)),
-            "TimeoutError" => Exc::TaskError(TaskError::TimeoutError),
-            "RetryTaskError" => Exc::TaskError(TaskError::Retry(None /*todo*/)),
-            "RevokedError" => Exc::TaskError(TaskError::RevokedError(err.exc_message)),
-            _ => Exc::TaskError(TaskError::UnexpectedError(err.exc_message)), // todo
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct TaskMeta {
-    pub task_id: TaskId,
-    pub status: State,
-    pub result: AnyValue,
-    pub traceback: Option<Traceback>,
-    pub children: Vec<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    date_done: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    group_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    parent_id: Option<String>,
-
-    // extend request meta
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    args: Option<Vec<u8>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kwargs: Option<Vec<u8>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    worker: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    retries: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    queue: Option<String>,
-}
-
-impl TaskMeta {
-    pub fn is_ready(&self) -> bool {
-        self.status.is_ready()
-    }
-
-    pub fn is_exception(&self) -> bool {
-        self.status.is_exception()
-    }
-}
-
-#[async_trait]
-pub trait BaseCached: Send + Sync + Sized {
-    fn _safe_url(&self) -> String {
-        match self.__parse_url() {
-            Some(url) => format!(
-                "{}://{}:***@{}:{}/{}",
-                url.scheme(),
-                url.username(),
-                url.host_str().unwrap(),
-                url.port().unwrap(),
-                url.path(),
-            ),
-            None => {
-                log::error!("Invalid redis url.");
-                String::from("")
-            }
-        }
-    }
-
-    fn __parse_url(&self) -> Option<url::Url>;
-
-    fn expires_in_seconds(&self) -> Option<u32>;
-
-    async fn cached(&self) -> MutexGuard<RefCell<HashMap<String, TaskMeta>>>;
-
-    async fn get_cached(&self, key: &Key) -> Option<TaskMeta> {
-        let guard = self.cached().await;
-        let cached = guard.borrow();
-        cached.get(key).map(Clone::clone)
-    }
-
-    async fn set_cached(&self, key: Key, val: TaskMeta) -> Option<TaskMeta> {
-        let mut guard = self.cached().await;
-        guard.get_mut().insert(key, val)
-    }
-
-    async fn del_cached(&self, key: &Key) -> Option<TaskMeta> {
-        let mut guard = self.cached().await;
-        guard.get_mut().remove(key)
-    }
-
-    async fn is_cached(&self, key: &Key) -> bool {
-        let guard = self.cached().await;
-        let cached = guard.borrow();
-        cached.contains_key(key)
-    }
-}
-
-#[async_trait]
-pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
-    type Builder: BackendBuilder<Backend = Self>;
-
-    async fn _store_result<T: Task>(
-        &self,
-        task_id: &TaskId,
-        data: AnyValue,
-        status: State,
-        option: &StoreOption<T>,
-    );
-
-    async fn __forget_task_meta_by(&self, task_id: &TaskId);
-
-    async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta;
-
-    fn __decode_task_meta(&self, payload: String) -> TaskMeta;
-
-    async fn __get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
-        self.ensure_not_eager();
-        if cache {
-            if let Some(meta) = self.get_cached(task_id).await {
-                return meta;
-            }
-        }
-
-        let meta = self.__fetch_task_meta_by(task_id).await;
-        if cache && meta.status == State::SUCCESS {
-            self.set_cached(task_id.clone(), meta.clone()).await;
-        }
-
-        return meta;
-    }
-
-    async fn __make_task_meta<T>(
-        task_id: TaskId,
-        result: AnyValue,
-        status: State,
-        option: &StoreOption<T>,
-    ) -> TaskMeta
-    where
-        T: Task,
-    {
-        let date_done = if status.is_ready() {
-            Some(DateTime::<Utc>::from(std::time::SystemTime::now()).to_rfc3339())
-        } else {
-            None
-        };
-
-        TaskMeta {
-            task_id,
-            status,
-            result,
-            traceback: option.traceback,
-            children: vec![/* todo */],
-            date_done,
-            group_id: option.request.and_then(|r| r.group.clone()),
-            parent_id: None,
-            // todo: assign request properties to following fields
-            name: None,
-            args: None,
-            kwargs: None,
-            worker: option.request.and_then(|r| r.hostname.clone()),
-            retries: option.request.map(|r| r.retries),
-            queue: option.request.and_then(|r| r.reply_to.clone()),
-        }
-    }
-
-    async fn __reload_task_meta(&mut self, task_id: &TaskId) -> Option<TaskMeta> {
-        let meta = self.__get_task_meta(task_id, false).await;
-        self.set_cached(task_id.clone(), meta).await
-    }
-}
-
-#[async_trait]
-impl<B: BaseBackendProtocol> Backend for B {
-    type Builder = B::Builder;
-
-    fn safe_url(&self) -> String {
-        self._safe_url()
-    }
-
-    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
-        self.__get_task_meta(task_id, cache).await
-    }
-
-    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
-    where
-        D: for<'de> Deserialize<'de>,
-    {
-        self.recover_result(task_meta.result, task_meta.status)
-    }
-
-    async fn forget(&self, task_id: &TaskId) {
-        self.del_cached(task_id).await;
-        self.__forget_task_meta_by(task_id).await
-    }
-
-    async fn store_result<D, T>(
-        &self,
-        task_id: &TaskId,
-        result: TaskResult<D>,
-        status: State,
-        option: &StoreOption<T>,
-    ) where
-        D: Serialize + Send + Sync,
-        T: Task,
-    {
-        let data = self.prepare_result(result, status);
-        self._store_result(task_id, data, status, option).await;
-    }
+    async fn build(self) -> Result<Self::Backend, BackendError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kombu_serde::{AnyValue, SerializerKind};
+    use chrono::{DateTime, Utc};
 
     #[test]
     fn test_serde_result_meta() {

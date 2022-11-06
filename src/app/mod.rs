@@ -18,8 +18,7 @@ use tokio_stream::StreamMap;
 use trace::{build_tracer, TraceBuilder, TracerTrait};
 
 use crate::app::trace::TraceBuilderResult;
-use crate::backend::DisabledBackend;
-use crate::backend::{Backend, BackendBuilder};
+use crate::backend::{Backend, BackendBuilder, DisabledBackend};
 use crate::broker::{Broker, BrokerBuilder};
 use crate::config::{
     BackendConfig, BrokerConfig, ConfigBackend, ConfigBroker, ConfigTask, TaskConfig,
@@ -159,8 +158,7 @@ where
             .await?;
 
         let backend = D::Builder::new(self.config.backend.url.as_str())
-            .result_serializer(self.config.backend.result_serializer)
-            .result_expires(self.config.backend.result_expires)
+            .config(self.config.backend.clone())
             .build()
             .await?;
 

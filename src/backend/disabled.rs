@@ -1,34 +1,33 @@
 use async_trait::async_trait;
-use chrono::Duration;
 use serde::{Deserialize, Serialize};
 
+use crate::backend::common::basic_layer::BackendBasic;
 use crate::backend::{Backend, BackendBuilder, StoreOption, TaskId, TaskMeta, TaskResult};
 use crate::error::BackendError;
-use crate::kombu_serde::SerializerKind;
 use crate::prelude::Task;
 use crate::states::State;
 
 pub struct DisabledBackend {}
 
-pub struct DisabledBackendBuilder {}
+pub struct DisabledBackendBuilder {
+    backend_basic: BackendBasic,
+}
 
 #[async_trait]
 impl BackendBuilder for DisabledBackendBuilder {
     type Backend = DisabledBackend;
 
     fn new(_backend_url: &str) -> Self {
-        Self {}
+        Self {
+            backend_basic: BackendBasic::new(_backend_url),
+        }
     }
 
-    fn result_serializer(self, _kind: SerializerKind) -> Self {
-        self
+    fn backend_basic(&mut self) -> &mut BackendBasic {
+        &mut self.backend_basic
     }
 
-    fn result_expires(self, _expiration: Option<Duration>) -> Self {
-        self
-    }
-
-    async fn build(&self) -> Result<Self::Backend, BackendError> {
+    async fn build(self) -> Result<Self::Backend, BackendError> {
         Ok(Self::Backend {})
     }
 }

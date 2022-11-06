@@ -2,13 +2,15 @@ use async_trait::async_trait;
 use bstr::ByteVec;
 
 use crate::backend::{
-    BaseBackendProtocol, BaseCached, BaseTranslator, Key, StoreOption, TaskId, TaskMeta,
+    BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer, StoreOption, TaskId, TaskMeta,
 };
 use crate::kombu_serde::AnyValue;
 use crate::states::State;
 use crate::task::Task;
 
 use super::BackendBuilder;
+
+pub type Key = String;
 
 #[async_trait]
 pub trait BaseKeyValueStore: Send + Sync + Sized {
@@ -67,9 +69,9 @@ pub trait BaseKeyValueStore: Send + Sync + Sized {
 }
 
 #[async_trait]
-impl<B> BaseBackendProtocol for B
+impl<B> BackendProtocolLayer for B
 where
-    B: BaseKeyValueStore + BaseCached + BaseTranslator,
+    B: BaseKeyValueStore + BackendBasicLayer + BackendSerdeLayer,
 {
     type Builder = B::Builder;
 

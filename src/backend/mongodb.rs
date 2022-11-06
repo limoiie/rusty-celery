@@ -1,21 +1,16 @@
 use crate::backend::{
-    BackendBuilder, BaseBackendProtocol, BaseCached, BaseTranslator, StoreOption, TaskId, TaskMeta,
-    Traceback,
+    BackendBasic, BackendBasicLayer, BackendBuilder, BackendProtocolLayer, BackendSerdeLayer,
+    StoreOption, TaskId, TaskMeta, Traceback,
 };
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, SerializerKind};
 use crate::prelude::Task;
 use crate::states::State;
 use async_trait::async_trait;
-use chrono::Duration;
 use mongodb::bson::{doc, DateTime};
 use mongodb::options::FindOneAndReplaceOptions;
 use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MongoTaskMeta {
@@ -93,9 +88,7 @@ impl MongoTaskMeta {
 }
 
 pub struct MongoDbBackendBuilder {
-    url: String,
-    result_serializer: SerializerKind,
-    expiration_in_seconds: Option<u32>,
+    backend_basic: BackendBasic,
 }
 
 #[async_trait]
@@ -104,41 +97,27 @@ impl BackendBuilder for MongoDbBackendBuilder {
 
     fn new(backend_url: &str) -> Self {
         Self {
-            url: backend_url.to_string(),
-            result_serializer: SerializerKind::JSON,
-            expiration_in_seconds: None,
+            backend_basic: BackendBasic::new(backend_url),
         }
     }
 
-    fn result_serializer(mut self, kind: SerializerKind) -> Self {
-        self.result_serializer = kind;
-        self
+    fn backend_basic(&mut self) -> &mut BackendBasic {
+        &mut self.backend_basic
     }
 
-    fn result_expires(mut self, expiration: Option<Duration>) -> Self {
-        self.expiration_in_seconds = expiration.map(|d| d.num_seconds() as u32);
-        self
-    }
-
-    async fn build(&self) -> Result<Self::Backend, BackendError> {
-        let client = Client::with_uri_str(self.url.as_str()).await?;
+    async fn build(self) -> Result<Self::Backend, BackendError> {
+        let client = Client::with_uri_str(self.backend_basic.url.as_str()).await?;
 
         Ok(MongoDbBackend {
-            url: self.url.clone(),
-            result_serializer: self.result_serializer,
-            expiration_in_seconds: self.expiration_in_seconds,
+            backend_basic: self.backend_basic,
             connection: client,
-            cache: Arc::new(Mutex::new(RefCell::new(HashMap::new()))),
         })
     }
 }
 
 pub struct MongoDbBackend {
-    url: String,
-    result_serializer: SerializerKind,
-    expiration_in_seconds: Option<u32>,
+    backend_basic: BackendBasic,
     connection: Client,
-    cache: Arc<Mutex<RefCell<HashMap<String, TaskMeta>>>>,
 }
 
 impl MongoDbBackend {
@@ -159,34 +138,32 @@ impl MongoDbBackend {
 }
 
 #[async_trait]
-impl BaseCached for MongoDbBackend {
-    fn __parse_url(&self) -> Option<url::Url> {
-        url::Url::parse(self.url.as_str()).ok().and_then(|url| {
-            if url.scheme().contains("mongo") {
-                Some(url)
-            } else {
-                None
-            }
-        })
+impl BackendBasicLayer for MongoDbBackend {
+    fn backend_basic(&self) -> &BackendBasic {
+        &self.backend_basic
     }
 
-    fn expires_in_seconds(&self) -> Option<u32> {
-        self.expiration_in_seconds
-    }
-
-    async fn cached(&self) -> MutexGuard<RefCell<HashMap<String, TaskMeta>>> {
-        self.cache.lock().await
+    fn parse_url(&self) -> Option<url::Url> {
+        url::Url::parse(self.backend_basic.url.as_str())
+            .ok()
+            .and_then(|url| {
+                if url.scheme().contains("mongo") {
+                    Some(url)
+                } else {
+                    None
+                }
+            })
     }
 }
 
-impl BaseTranslator for MongoDbBackend {
+impl BackendSerdeLayer for MongoDbBackend {
     fn serializer(&self) -> SerializerKind {
-        self.result_serializer
+        self.backend_basic.result_serializer
     }
 }
 
 #[async_trait]
-impl BaseBackendProtocol for MongoDbBackend {
+impl BackendProtocolLayer for MongoDbBackend {
     type Builder = MongoDbBackendBuilder;
 
     async fn _store_result<T>(

@@ -77,6 +77,7 @@ pub trait ConfigTask: Sized {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct BrokerConfig {
     pub url: String,
     pub default_queue: String,
@@ -147,6 +148,7 @@ pub trait ConfigBroker: Sized {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct BackendConfig {
     pub url: String,
     pub result_serializer: SerializerKind,
