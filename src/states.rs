@@ -25,3 +25,17 @@ pub static EXCEPTION_STATES: Lazy<HashSet<State>> =
 
 pub static PROPAGATE_STATES: Lazy<HashSet<State>> =
     Lazy::new(|| HashSet::from([State::FAILURE, State::REVOKED]));
+
+impl State {
+    pub fn is_ready(&self) -> bool {
+        READY_STATES.contains(self)
+    }
+
+    pub fn is_exception(&self) -> bool {
+        EXCEPTION_STATES.contains(self)
+    }
+
+    pub fn is_successful(&self) -> bool {
+        matches!(self, State::SUCCESS)
+    }
+}

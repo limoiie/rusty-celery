@@ -203,6 +203,12 @@ pub enum BackendError {
     #[error("invalid backend URL '{0}'")]
     InvalidBackendUrl(String),
 
+    #[error("timeout")]
+    TimeoutError,
+
+    #[error("deserialize error \"{0}\"")]
+    DeserializeError(String),
+
     /// Any other Redis error that could happen.
     #[error("Redis error \"{0}\"")]
     RedisError(#[from] redis::RedisError),

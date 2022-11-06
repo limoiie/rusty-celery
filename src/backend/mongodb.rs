@@ -210,7 +210,7 @@ impl BaseBackendProtocol for MongoDbBackend {
             .unwrap();
     }
 
-    async fn __forget_task_meta_by(&mut self, task_id: &TaskId) {
+    async fn __forget_task_meta_by(&self, task_id: &TaskId) {
         self.collection()
             .delete_one(doc! {"_id": task_id}, None)
             .await
@@ -233,7 +233,7 @@ impl BaseBackendProtocol for MongoDbBackend {
 
         TaskMeta {
             status: State::PENDING,
-            result: self.serializer().to_value(&None::<()>),
+            result: self.serializer().data_to_value(&None::<()>),
             ..TaskMeta::default()
         }
     }

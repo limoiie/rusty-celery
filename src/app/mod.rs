@@ -256,7 +256,7 @@ where
     pub async fn send_task<T: Task>(
         &self,
         mut task_sig: Signature<T>,
-    ) -> Result<AsyncResult, CeleryError> {
+    ) -> Result<AsyncResult<D>, CeleryError> {
         task_sig.options.update(&self.config.task.options);
         let maybe_queue = task_sig.queue.take();
         let queue = maybe_queue.as_deref().unwrap_or_else(|| {
@@ -271,7 +271,7 @@ where
             queue,
         );
         self.broker.send(&message, queue).await?;
-        Ok(AsyncResult::new(message.task_id()))
+        Ok(AsyncResult::new(message.task_id(), self.backend.clone()))
     }
 
     /// Register a task.

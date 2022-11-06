@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::Duration;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::backend::{Backend, BackendBuilder, TaskId, TaskResult, Traceback};
+use crate::backend::{Backend, BackendBuilder, TaskId, TaskMeta, TaskResult, Traceback};
 use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
 use crate::prelude::Task;
@@ -42,8 +42,19 @@ impl Backend for DisabledBackend {
         "#[disabled!]#".to_owned()
     }
 
-    async fn forget(&mut self, _task_id: &TaskId) {
-        panic!("Backend is disabled!")
+    async fn get_task_meta(&self, _task_id: &TaskId, _cache: bool) -> TaskMeta {
+        unreachable!("Backend is disabled!")
+    }
+
+    fn recover_result_by_meta<D>(&self, _task_meta: TaskMeta) -> Option<TaskResult<D>>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        unreachable!("Backend is disabled!")
+    }
+
+    async fn forget(&self, _task_id: &TaskId) {
+        unreachable!("Backend is disabled!")
     }
 
     async fn store_result_wrapped_as_task_meta<D: Serialize + Send + Sync, T: Task>(

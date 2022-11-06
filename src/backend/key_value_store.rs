@@ -94,7 +94,7 @@ where
         }
     }
 
-    async fn __forget_task_meta_by(&mut self, task_id: &TaskId) {
+    async fn __forget_task_meta_by(&self, task_id: &TaskId) {
         self.delete(self.get_key_for_task(task_id, None))
             .await
             .unwrap();
@@ -109,7 +109,7 @@ where
 
         TaskMeta {
             status: State::PENDING,
-            result: self.serializer().to_value(&None::<()>),
+            result: self.serializer().data_to_value(&None::<()>),
             ..TaskMeta::default()
         }
     }

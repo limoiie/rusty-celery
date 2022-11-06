@@ -101,11 +101,30 @@ impl SerializerKind {
         }
     }
 
-    pub fn to_value<T: Serialize>(&self, data: &T) -> AnyValue {
+    pub fn data_to_value<T: Serialize>(&self, data: &T) -> AnyValue {
         match self {
             SerializerKind::JSON => serde_json::to_value(data).unwrap().into(),
             #[cfg(feature = "serde_yaml")]
             SerializerKind::YAML => serde_yaml::to_value(data).unwrap().into(),
+        }
+    }
+
+    pub fn value_to_data<T: for<'de> Deserialize<'de>>(
+        &self,
+        value: AnyValue,
+    ) -> Result<T, String> {
+        match (self, value) {
+            (SerializerKind::JSON, AnyValue::JSON(value)) => {
+                serde_json::from_value(value).map_err(|e| format!("{}", e))
+            }
+            #[cfg(feature = "serde_yaml")]
+            (SerializerKind::YAML, AnyValue::YAML(value)) => {
+                serde_yaml::from_value(value).map_err(|e| format!("{}", e))
+            }
+            (_, value) => Err(format!(
+                "SerializerKind {:?} does not suit for {:?}",
+                self, value
+            )),
         }
     }
 }
@@ -121,7 +140,7 @@ mod tests {
         let data = HashMap::from([("name", 0x7)]);
 
         let kind = SerializerKind::JSON;
-        let value = kind.to_value(&data);
+        let value = kind.data_to_value(&data);
 
         let (_, _, serialized) = kind.dump(&value);
         let output_value = kind.load(&serialized);

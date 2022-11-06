@@ -8,12 +8,12 @@ use tokio::sync::MutexGuard;
 
 use crate::error::{BackendError, TaskError, TraceError};
 use crate::kombu_serde::{AnyValue, SerializerKind};
-use crate::states::{State, EXCEPTION_STATES, READY_STATES};
+use crate::states::State;
 use crate::task::{Request, Task};
 
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
-pub use self::redis::{RedisBackend, RedisBackendBuilder};
 pub use self::mongodb::{MongoDbBackend, MongoDbBackendBuilder};
+pub use self::redis::{RedisBackend, RedisBackendBuilder};
 
 mod disabled;
 mod key_value_store;
@@ -26,12 +26,49 @@ type Traceback = ();
 type Key = String;
 
 pub type TaskResult<D> = Result<D, Exc>;
+pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
 
 #[async_trait]
 pub trait Backend: Send + Sync + Sized {
     type Builder: BackendBuilder<Backend = Self>;
 
     fn safe_url(&self) -> String;
+
+    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
+
+    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    where
+        D: for<'de> Deserialize<'de>;
+
+    async fn wait_for(
+        &self,
+        task_id: &TaskId,
+        timeout: Option<std::time::Duration>,
+        interval: Option<std::time::Duration>,
+    ) -> Result<TaskMeta, BackendError> {
+        let interval = interval.unwrap_or(std::time::Duration::from_millis(500));
+
+        let timeout =
+            timeout.map(|timeout| core::time::Duration::new(0, timeout.as_nanos() as u32));
+        let interval = core::time::Duration::new(0, interval.as_nanos() as u32);
+
+        self.ensure_not_eager();
+
+        let start_timing = std::time::SystemTime::now();
+        loop {
+            let task_meta = self.get_task_meta(task_id, true).await;
+            if task_meta.is_ready() {
+                return Ok(task_meta);
+            }
+
+            tokio::time::sleep(interval).await;
+            if let Some(timeout) = timeout {
+                if std::time::SystemTime::now() > start_timing + timeout {
+                    return Err(BackendError::TimeoutError);
+                }
+            }
+        }
+    }
 
     async fn mark_as_started<T: Task>(
         &self,
@@ -136,7 +173,7 @@ pub trait Backend: Send + Sync + Sized {
             .await;
     }
 
-    async fn forget(&mut self, task_id: &TaskId);
+    async fn forget(&self, task_id: &TaskId);
 
     async fn store_result_wrapped_as_task_meta<D: Serialize + Send + Sync, T: Task>(
         &self,
@@ -153,6 +190,10 @@ pub trait Backend: Send + Sync + Sized {
         _state: State,
         _result: TaskResult<D>,
     ) {
+        // no-op
+    }
+
+    fn ensure_not_eager(&self) {
         // no-op
     }
 
@@ -192,6 +233,13 @@ pub trait BackendBuilder {
     async fn build(&self) -> Result<Self::Backend, BackendError>;
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct GeneralError {
+    exc_type: String,
+    exc_message: String,
+    exc_module: String,
+}
+
 pub trait BaseTranslator: Send + Sync + Sized {
     fn serializer(&self) -> SerializerKind;
 
@@ -206,7 +254,7 @@ pub trait BaseTranslator: Send + Sync + Sized {
     fn prepare_result<D: Serialize>(&self, result: TaskResult<D>, state: State) -> AnyValue {
         match result {
             Ok(ref data) => self.prepare_value(data),
-            Err(ref err) if EXCEPTION_STATES.contains(&state) => self.prepare_exception(err),
+            Err(ref err) if state.is_exception() => self.prepare_exception(err),
             Err(_) => todo!(),
         }
     }
@@ -216,7 +264,7 @@ pub trait BaseTranslator: Send + Sync + Sized {
         //   if result is ResultBase {
         //       result.as_tuple()
         //   }
-        self.serializer().to_value(result)
+        self.serializer().data_to_value(result)
     }
 
     fn prepare_exception(&self, exc: &Exc) -> AnyValue {
@@ -225,30 +273,61 @@ pub trait BaseTranslator: Send + Sync + Sized {
                 TaskError::ExpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
                 TaskError::UnexpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
                 TaskError::TimeoutError => ("TimeoutError", "", "celery.exceptions"),
-                TaskError::Retry(_time) => ("RetryTaskError", "todo!", "celery.exceptions"),
+                TaskError::Retry(_time) => {
+                    ("RetryTaskError", "todo!" /*todo*/, "celery.exceptions")
+                }
                 TaskError::RevokedError(err) => ("RevokedError", err.as_str(), "celery.exceptions"),
             },
             Exc::ExpirationError => ("TaskError", "", "celery.exceptions"),
             Exc::Retry(_time) => ("RetryTaskError", "todo!", "celery.exceptions"),
         };
 
-        let exc_struct = HashMap::from([
-            ("exc_type", typ),
-            ("exc_message", msg),
-            ("exc_module", module),
-        ]);
+        let exc_struct = GeneralError {
+            exc_type: typ.into(),
+            exc_message: msg.into(),
+            exc_module: module.into(),
+        };
 
-        self.serializer().to_value(&exc_struct)
+        self.serializer().data_to_value(&exc_struct)
+    }
+
+    fn recover_result<D>(&self, data: AnyValue, state: State) -> Option<TaskResult<D>>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        match state {
+            _ if state.is_exception() => Some(Err(self.recover_exception(data))),
+            _ if state.is_successful() => Some(Ok(self.recover_value(data))),
+            _ => None,
+        }
+    }
+
+    fn recover_value<D>(&self, data: AnyValue) -> D
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        self.serializer().value_to_data(data).unwrap()
+    }
+
+    fn recover_exception(&self, data: AnyValue) -> Exc {
+        let err: GeneralError = self.serializer().value_to_data(data).unwrap();
+        match err.exc_type.as_str() {
+            "TaskError" => Exc::TaskError(TaskError::ExpectedError(err.exc_message)),
+            "TimeoutError" => Exc::TaskError(TaskError::TimeoutError),
+            "RetryTaskError" => Exc::TaskError(TaskError::Retry(None /*todo*/)),
+            "RevokedError" => Exc::TaskError(TaskError::RevokedError(err.exc_message)),
+            _ => Exc::TaskError(TaskError::UnexpectedError(err.exc_message)), // todo
+        }
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TaskMeta {
-    task_id: TaskId,
-    status: State,
-    result: AnyValue,
-    traceback: Option<Traceback>, // fixme
-    children: Vec<String>,        // fixme
+    pub task_id: TaskId,
+    pub status: State,
+    pub result: AnyValue,
+    pub traceback: Option<Traceback>,
+    pub children: Vec<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     date_done: Option<String>,
@@ -270,6 +349,16 @@ pub struct TaskMeta {
     retries: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     queue: Option<String>,
+}
+
+impl TaskMeta {
+    pub fn is_ready(&self) -> bool {
+        self.status.is_ready()
+    }
+
+    pub fn is_exception(&self) -> bool {
+        self.status.is_exception()
+    }
 }
 
 #[async_trait]
@@ -333,13 +422,13 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
         request: Option<&Request<T>>,
     );
 
-    async fn __forget_task_meta_by(&mut self, task_id: &TaskId);
+    async fn __forget_task_meta_by(&self, task_id: &TaskId);
 
     async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta;
 
     fn __decode_task_meta(&self, payload: String) -> TaskMeta;
 
-    async fn __get_task_meta(&mut self, task_id: &TaskId, cache: bool) -> TaskMeta {
+    async fn __get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.ensure_not_eager();
         if cache {
             if let Some(meta) = self.get_cached(task_id).await {
@@ -362,7 +451,7 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
         traceback: Option<Traceback>,
         request: Option<&Request<T>>,
     ) -> TaskMeta {
-        let date_done = if READY_STATES.contains(&status) {
+        let date_done = if status.is_ready() {
             Some(DateTime::<Utc>::from(std::time::SystemTime::now()).to_rfc3339())
         } else {
             None
@@ -391,10 +480,6 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
         let meta = self.__get_task_meta(task_id, false).await;
         self.set_cached(task_id.clone(), meta).await
     }
-
-    fn ensure_not_eager(&self) {
-        // no-op
-    }
 }
 
 #[async_trait]
@@ -405,7 +490,18 @@ impl<B: BaseBackendProtocol> Backend for B {
         self._safe_url()
     }
 
-    async fn forget(&mut self, task_id: &TaskId) {
+    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
+        self.__get_task_meta(task_id, cache).await
+    }
+
+    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        self.recover_result(task_meta.result, task_meta.status)
+    }
+
+    async fn forget(&self, task_id: &TaskId) {
         self.del_cached(task_id).await;
         self.__forget_task_meta_by(task_id).await
     }
