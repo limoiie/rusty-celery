@@ -206,6 +206,10 @@ pub enum BackendError {
     /// Any other Redis error that could happen.
     #[error("Redis error \"{0}\"")]
     RedisError(#[from] redis::RedisError),
+
+    /// Any other Mongo error that could happen.
+    #[error("Mongo error \"{0}\"")]
+    MongoError(#[from] mongodb::error::Error),
 }
 
 /// An invalid glob pattern for a routing rule.

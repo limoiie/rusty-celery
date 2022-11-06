@@ -13,9 +13,11 @@ use crate::task::{Request, Task};
 
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
 pub use self::redis::{RedisBackend, RedisBackendBuilder};
+pub use self::mongodb::{MongoDbBackend, MongoDbBackendBuilder};
 
 mod disabled;
 mod key_value_store;
+mod mongodb;
 mod redis;
 
 type Exc = TraceError;
@@ -242,7 +244,6 @@ pub trait BaseTranslator: Send + Sync + Sized {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TaskMeta {
-    _id: TaskId,
     task_id: TaskId,
     status: State,
     result: AnyValue,
@@ -273,7 +274,24 @@ pub struct TaskMeta {
 
 #[async_trait]
 pub trait BaseCached: Send + Sync + Sized {
-    fn __safe_url(&self) -> String;
+    fn _safe_url(&self) -> String {
+        match self.__parse_url() {
+            Some(url) => format!(
+                "{}://{}:***@{}:{}/{}",
+                url.scheme(),
+                url.username(),
+                url.host_str().unwrap(),
+                url.port().unwrap(),
+                url.path(),
+            ),
+            None => {
+                log::error!("Invalid redis url.");
+                String::from("")
+            }
+        }
+    }
+
+    fn __parse_url(&self) -> Option<url::Url>;
 
     fn expires_in_seconds(&self) -> Option<u32>;
 
@@ -351,7 +369,6 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
         };
 
         TaskMeta {
-            _id: task_id.clone(),
             task_id,
             status,
             result,
@@ -385,7 +402,7 @@ impl<B: BaseBackendProtocol> Backend for B {
     type Builder = B::Builder;
 
     fn safe_url(&self) -> String {
-        self.__safe_url()
+        self._safe_url()
     }
 
     async fn forget(&mut self, task_id: &TaskId) {
@@ -416,7 +433,6 @@ mod tests {
         let serializer = SerializerKind::JSON;
 
         let result_meta = TaskMeta {
-            _id: "fake-id".to_owned(),
             task_id: "fake-id".to_owned(),
             status: State::SUCCESS,
             result: AnyValue::JSON(serde_json::to_value(11).unwrap()),

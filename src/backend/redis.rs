@@ -73,22 +73,8 @@ impl BaseTranslator for RedisBackend {
 
 #[async_trait]
 impl BaseCached for RedisBackend {
-    fn __safe_url(&self) -> String {
-        let parsed_url = redis::parse_redis_url(&self.url[..]);
-        match parsed_url {
-            Some(url) => format!(
-                "{}://{}:***@{}:{}/{}",
-                url.scheme(),
-                url.username(),
-                url.host_str().unwrap(),
-                url.port().unwrap(),
-                url.path(),
-            ),
-            None => {
-                log::error!("Invalid redis url.");
-                String::from("")
-            }
-        }
+    fn __parse_url(&self) -> Option<url::Url> {
+        redis::parse_redis_url(&self.url[..])
     }
 
     fn expires_in_seconds(&self) -> Option<u32> {
