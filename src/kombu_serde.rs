@@ -1,3 +1,4 @@
+use bstr::ByteVec;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -62,41 +63,41 @@ pub enum SerializerKind {
 }
 
 impl SerializerKind {
-    pub fn dump_bytes(&self, data: Vec<u8>) -> (&'static str, &'static str, Vec<u8>) {
-        ("application/data", "binary", data)
+    pub fn dump_bytes(&self, data: Vec<u8>) -> (&'static str, &'static str, String) {
+        ("application/data", "binary", data.into_string_lossy()) // fixme: encoding in a correct way
     }
 
-    pub fn dump_string(&self, data: String) -> (&'static str, &'static str, Vec<u8>) {
-        ("text/plain", "utf-8", data.into_bytes())
+    pub fn dump_string(&self, data: String) -> (&'static str, &'static str, String) {
+        ("text/plain", "utf-8", data)
     }
 
-    pub fn dump<D: Serialize>(&self, data: &D) -> (&'static str, &'static str, Vec<u8>) {
+    pub fn dump<D: Serialize>(&self, data: &D) -> (&'static str, &'static str, String) {
         match self {
             SerializerKind::JSON => (
                 "application/json",
                 "utf-8",
-                serde_json::to_vec(data).unwrap(),
+                serde_json::to_string(data).unwrap(),
             ),
             #[cfg(feature = "serde_yaml")]
             SerializerKind::YAML => (
                 "application/x-yaml",
                 "utf-8",
-                serde_yaml::to_vec(data).unwrap(),
+                serde_yaml::to_string(data).unwrap(),
             ),
         }
     }
 
-    pub fn load<D: for<'de> Deserialize<'de>>(&self, data: &Vec<u8>) -> D {
+    pub fn load<D: for<'de> Deserialize<'de>>(&self, data: &String) -> D {
         log::debug!(
             "Try decoding as {} with `{}'",
             std::any::type_name::<D>(),
-            String::from_utf8_lossy(data).as_ref()
+            data
         );
 
         match self {
-            SerializerKind::JSON => serde_json::from_slice(data.as_slice()).unwrap(),
+            SerializerKind::JSON => serde_json::from_str(data.as_str()).unwrap(),
             #[cfg(feature = "serde_yaml")]
-            SerializerKind::YAML => serde_yaml::from_slice(data.as_slice()).unwrap(),
+            SerializerKind::YAML => serde_yaml::from_str(data.as_str()).unwrap(),
         }
     }
 

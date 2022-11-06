@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use bstr::ByteVec;
 
 use crate::backend::{
     BaseBackendProtocol, BaseCached, BaseTranslator, Key, TaskId, TaskMeta, Traceback,
@@ -86,9 +87,9 @@ where
         let remote_task_meta = self.__fetch_task_meta_by(task_id).await;
         if remote_task_meta.status != State::SUCCESS {
             let data = self.encode(&task_meta);
-            log::debug!("Store task meta: {}", String::from_utf8_lossy(&data).as_ref());
+            log::debug!("Store task meta: {}", data);
 
-            self._set_with_state(self.get_key_for_task(task_id, None), &data, state)
+            self._set_with_state(self.get_key_for_task(task_id, None), data.as_bytes(), state)
                 .await;
         }
     }
@@ -102,21 +103,20 @@ where
     async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta {
         if let Some(meta) = self.get(self.get_key_for_task(task_id, None)).await {
             if !meta.is_empty() {
-                return self.__decode_task_meta(meta);
+                return self.__decode_task_meta(meta.into_string_lossy());
             }
         }
 
         TaskMeta {
             status: State::PENDING,
-            result: AnyValue::JSON(serde_json::to_value(10).unwrap()),
+            result: self.serializer().to_value(&None::<()>),
             ..TaskMeta::default()
         }
     }
 
-    fn __decode_task_meta(&self, payload: Vec<u8>) -> TaskMeta {
+    fn __decode_task_meta(&self, payload: String) -> TaskMeta {
         // todo:
         //   convert exception to rust exception
         self.decode::<TaskMeta>(payload)
     }
-
 }

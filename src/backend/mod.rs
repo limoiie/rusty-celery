@@ -193,11 +193,11 @@ pub trait BackendBuilder {
 pub trait BaseTranslator: Send + Sync + Sized {
     fn serializer(&self) -> SerializerKind;
 
-    fn encode<D: Serialize>(&self, data: &D) -> Vec<u8> {
+    fn encode<D: Serialize>(&self, data: &D) -> String {
         self.serializer().dump(data).2
     }
 
-    fn decode<D: for<'de> Deserialize<'de>>(&self, payload: Vec<u8>) -> D {
+    fn decode<D: for<'de> Deserialize<'de>>(&self, payload: String) -> D {
         self.serializer().load(&payload)
     }
 
@@ -319,7 +319,7 @@ pub trait BaseBackendProtocol: BaseCached + BaseTranslator {
 
     async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta;
 
-    fn __decode_task_meta(&self, payload: Vec<u8>) -> TaskMeta;
+    fn __decode_task_meta(&self, payload: String) -> TaskMeta;
 
     async fn __get_task_meta(&mut self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.ensure_not_eager();
