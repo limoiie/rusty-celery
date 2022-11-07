@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_recursion::async_recursion;
 use serde::Deserialize;
@@ -28,8 +27,8 @@ pub struct RevokeOption {
 
 #[derive(Default)]
 pub struct GetOption {
-    timeout: Option<Duration>,
-    interval: Option<Duration>,
+    timeout: Option<chrono::Duration>,
+    interval: Option<chrono::Duration>,
 }
 
 impl<B> AsyncResult<B>

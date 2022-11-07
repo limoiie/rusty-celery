@@ -24,8 +24,8 @@ impl<'require, T: Task> StoreOptions<'require, T> {
 
 #[derive(TypedBuilder)]
 pub struct WaitForOptions {
-    pub(crate) timeout: Option<std::time::Duration>,
-    pub(crate) interval: Option<std::time::Duration>,
+    pub(crate) timeout: Option<chrono::Duration>,
+    pub(crate) interval: Option<chrono::Duration>,
 }
 
 #[derive(TypedBuilder)]

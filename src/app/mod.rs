@@ -12,7 +12,6 @@ use tokio::select;
 use tokio::signal::unix::{signal, Signal, SignalKind};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::RwLock;
-use tokio::time::{self, Duration};
 use tokio_stream::StreamMap;
 
 use trace::{build_tracer, TraceBuilder, TracerTrait};
@@ -457,7 +456,7 @@ where
             let mut reconnect_successful: bool = false;
             for _ in 0..self.config.broker.connection_max_retries {
                 info!("Trying to re-establish connection with broker");
-                time::sleep(Duration::from_secs(
+                tokio::time::sleep(tokio::time::Duration::from_secs(
                     self.config.broker.connection_retry_delay as u64,
                 ))
                 .await;

@@ -36,7 +36,11 @@ pub struct BackendBasic {
     pub url: String,
     pub safe_url: String,
     pub result_serializer: SerializerKind,
-    pub expiration_in_seconds: Option<u32>,
+
+    /// Expiration for a task result.
+    pub result_expires: Option<chrono::Duration>,
+
+    /// A table that caches only ready [TaskMeta].
     pub cache: Arc<Mutex<RefCell<HashMap<String, TaskMeta>>>>,
 }
 
@@ -46,7 +50,7 @@ impl BackendBasic {
             url: backend_url.to_owned(),
             safe_url: backend_url.to_owned(),
             result_serializer: SerializerKind::JSON,
-            expiration_in_seconds: None,
+            result_expires: None,
             cache: Arc::new(Mutex::new(RefCell::new(HashMap::new()))),
         }
     }
@@ -158,8 +162,7 @@ pub trait BackendBuilder: Sized {
         self.backend_basic().url = config.url;
         self.backend_basic().safe_url = safe_url;
         self.backend_basic().result_serializer = config.result_serializer;
-        self.backend_basic().expiration_in_seconds =
-            config.result_expires.map(|d| d.num_seconds() as u32);
+        self.backend_basic().result_expires = config.result_expires;
         self
     }
 

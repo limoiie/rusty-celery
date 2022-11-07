@@ -88,10 +88,10 @@ impl KeyValueStoreLayer for RedisBackend {
         }
 
         let mut pipe = redis::pipe();
-        let pipe = if let Some(expiration_in_seconds) = self.backend_basic.expiration_in_seconds {
+        let pipe = if let Some(expires) = self.backend_basic.result_expires {
             pipe.cmd("SETEX")
                 .arg(&key)
-                .arg(expiration_in_seconds)
+                .arg(expires.num_seconds())
                 .arg(value)
                 .ignore()
         } else {

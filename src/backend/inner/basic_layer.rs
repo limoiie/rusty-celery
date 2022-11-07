@@ -12,7 +12,7 @@ pub trait BackendBasicLayer: Send + Sync + Sized {
     fn _backend_basic(&self) -> &BackendBasic;
 
     fn _expires_in_seconds(&self) -> Option<u32> {
-        self._backend_basic().result_expires.map(|d| d.as_secs() as u32)
+        self._backend_basic().result_expires.map(|d| d.num_seconds() as u32)
     }
 
     async fn _cached(&self) -> MutexGuard<RefCell<HashMap<String, TaskMeta>>> {

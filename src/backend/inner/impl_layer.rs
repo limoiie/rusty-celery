@@ -19,17 +19,15 @@ pub trait ImplLayer: Send + Sync + Sized {
     async fn wait_for_(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta> {
         let interval = option
             .interval
-            .or(Some(std::time::Duration::from_millis(500)))
-            .map(|interval| core::time::Duration::new(0, interval.as_nanos() as u32))
+            .or_else(|| Some(chrono::Duration::milliseconds(500)))
+            .as_ref()
+            .map(chrono::Duration::to_std)
+            .map(Result::unwrap)
             .unwrap();
-
-        let timeout = option
-            .timeout
-            .map(|timeout| core::time::Duration::new(0, timeout.as_nanos() as u32));
 
         self.ensure_not_eager_();
 
-        let start_timing = std::time::SystemTime::now();
+        let start_timing = chrono::Local::now();
         loop {
             let task_meta = self.get_task_meta_by_(task_id, true).await;
             if task_meta.is_ready() {
@@ -37,8 +35,8 @@ pub trait ImplLayer: Send + Sync + Sized {
             }
 
             tokio::time::sleep(interval).await;
-            if let Some(timeout) = timeout {
-                if std::time::SystemTime::now() > start_timing + timeout {
+            if let Some(timeout) = option.timeout {
+                if chrono::Local::now() > start_timing + timeout {
                     return Err(BackendError::TimeoutError);
                 }
             }
