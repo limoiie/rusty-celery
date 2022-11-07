@@ -62,25 +62,25 @@ pub trait BackendSerdeLayer: Send + Sync + Sized {
         self._serializer().data_to_value(&exc_struct)
     }
 
-    fn _recover_result<D>(&self, data: AnyValue, state: State) -> Option<TaskResult<D>>
+    fn _restore_result<D>(&self, data: AnyValue, state: State) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
         match state {
-            _ if state.is_exception() => Some(Err(self._recover_exception(data))),
-            _ if state.is_successful() => Some(Ok(self._recover_value(data))),
+            _ if state.is_exception() => Some(Err(self._restore_exception(data))),
+            _ if state.is_successful() => Some(Ok(self._restore_value(data))),
             _ => None,
         }
     }
 
-    fn _recover_value<D>(&self, data: AnyValue) -> D
+    fn _restore_value<D>(&self, data: AnyValue) -> D
     where
         D: for<'de> Deserialize<'de>,
     {
         self._serializer().value_to_data(data).unwrap()
     }
 
-    fn _recover_exception(&self, data: AnyValue) -> Exc {
+    fn _restore_exception(&self, data: AnyValue) -> Exc {
         let err: GeneralError = self._serializer().value_to_data(data).unwrap();
         match err.exc_type.as_str() {
             "TaskError" => Exc::TaskError(TaskError::ExpectedError(err.exc_message)),

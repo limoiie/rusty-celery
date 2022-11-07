@@ -140,7 +140,7 @@ pub trait ImplLayer: Send + Sync + Sized {
 
     async fn get_task_meta_by_(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
 
-    fn recover_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>;
 
@@ -249,11 +249,11 @@ impl<L: ImplLayer> Backend for L {
         self.get_task_meta_by_(task_id, cache).await
     }
 
-    fn recover_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
-        self.recover_result_(task_meta)
+        self.restore_result_(task_meta)
     }
 
     async fn store_result<D, T>(

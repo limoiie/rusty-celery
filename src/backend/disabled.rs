@@ -60,7 +60,7 @@ impl ImplLayer for DisabledBackend {
     }
 
     #[allow(unused)]
-    fn recover_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {

@@ -84,7 +84,8 @@ pub trait Backend: Send + Sync + Sized {
 
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
 
-    fn recover_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    /// Recover task result from its [TaskMeta].
+    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>;
 

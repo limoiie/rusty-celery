@@ -84,7 +84,7 @@ where
             .await?;
 
         let meta = self.set_cache_if_ready(meta).await;
-        Ok(self.backend.as_ref().recover_result::<D>(meta).unwrap())
+        Ok(self.backend.as_ref().restore_result::<D>(meta).unwrap())
     }
 
     pub async fn status(&self) -> State {

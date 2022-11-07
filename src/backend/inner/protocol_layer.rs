@@ -94,11 +94,11 @@ impl<B: BackendProtocolLayer> ImplLayer for B {
         self._get_task_meta_by(task_id, cache).await
     }
 
-    fn recover_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
-        self._recover_result(task_meta.result, task_meta.status)
+        self._restore_result(task_meta.result, task_meta.status)
     }
 
     async fn store_result_<D, T>(
