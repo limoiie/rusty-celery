@@ -238,7 +238,7 @@ where
         println!("{}", "[broker]".bold());
         println!(" {}", self.broker.safe_url());
         println!("{}", "[backend]".bold());
-        println!(" {}", self.backend.safe_url());
+        println!(" {}", self.backend.basic().safe_url);
         println!();
 
         // Registered tasks.

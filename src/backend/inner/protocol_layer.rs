@@ -85,10 +85,6 @@ impl<B: BackendProtocolLayer> ImplLayer for B {
         self._backend_basic()
     }
 
-    fn safe_url_(&self) -> String {
-        self._safe_url()
-    }
-
     async fn forget_(&self, task_id: &TaskId) {
         self._del_cached(task_id).await;
         self._forget_task_meta_by(task_id).await

@@ -30,6 +30,10 @@ impl BackendBuilder for DisabledBackendBuilder {
         &mut self.backend_basic
     }
 
+    fn parse_url(&self) -> Option<url::Url> {
+        url::Url::parse("disabled://localhost/").ok()
+    }
+
     async fn build(self) -> Result<Self::Backend, BackendError> {
         Ok(Self::Backend {
             backend_basic: self.backend_basic,
@@ -43,10 +47,6 @@ impl ImplLayer for DisabledBackend {
 
     fn basic_(&self) -> &BackendBasic {
         &self.backend_basic
-    }
-
-    fn safe_url_(&self) -> String {
-        "#[disabled!]#".to_owned()
     }
 
     #[allow(unused)]

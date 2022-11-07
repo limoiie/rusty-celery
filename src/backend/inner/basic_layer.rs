@@ -10,25 +10,6 @@ use crate::backend::{BackendBasic, TaskId, TaskMeta};
 pub trait BackendBasicLayer: Send + Sync + Sized {
     fn _backend_basic(&self) -> &BackendBasic;
 
-    fn _safe_url(&self) -> String {
-        match self._parse_url() {
-            Some(url) => format!(
-                "{}://{}:***@{}:{}/{}",
-                url.scheme(),
-                url.username(),
-                url.host_str().unwrap(),
-                url.port().unwrap(),
-                url.path(),
-            ),
-            None => {
-                log::error!("Invalid redis url.");
-                String::from("")
-            }
-        }
-    }
-
-    fn _parse_url(&self) -> Option<url::Url>;
-
     fn _expires_in_seconds(&self) -> Option<u32> {
         self._backend_basic().expiration_in_seconds
     }

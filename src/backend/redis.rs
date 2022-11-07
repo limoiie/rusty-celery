@@ -31,6 +31,10 @@ impl BackendBuilder for RedisBackendBuilder {
         &mut self.backend_basic
     }
 
+    fn parse_url(&self) -> Option<url::Url> {
+        redis::parse_redis_url(&self.backend_basic.url[..])
+    }
+
     async fn build(self) -> Result<Self::Backend, BackendError> {
         let client = Client::open(self.backend_basic.url.as_str())
             .map_err(|_| BackendError::InvalidBackendUrl(self.backend_basic.url.clone()))?;
@@ -50,14 +54,9 @@ impl BackendSerdeLayer for RedisBackend {
     }
 }
 
-#[async_trait]
 impl BackendBasicLayer for RedisBackend {
     fn _backend_basic(&self) -> &BackendBasic {
         &self.backend_basic
-    }
-
-    fn _parse_url(&self) -> Option<url::Url> {
-        redis::parse_redis_url(&self.backend_basic.url[..])
     }
 }
 

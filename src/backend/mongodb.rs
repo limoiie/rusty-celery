@@ -103,6 +103,18 @@ impl BackendBuilder for MongoDbBackendBuilder {
         &mut self.backend_basic
     }
 
+    fn parse_url(&self) -> Option<url::Url> {
+        url::Url::parse(self.backend_basic.url.as_str())
+            .ok()
+            .and_then(|url| {
+                if url.scheme().contains("mongo") {
+                    Some(url)
+                } else {
+                    None
+                }
+            })
+    }
+
     async fn build(self) -> Result<Self::Backend, BackendError> {
         let client = Client::with_uri_str(self.backend_basic.url.as_str()).await?;
 
@@ -139,18 +151,6 @@ impl MongoDbBackend {
 impl BackendBasicLayer for MongoDbBackend {
     fn _backend_basic(&self) -> &BackendBasic {
         &self.backend_basic
-    }
-
-    fn _parse_url(&self) -> Option<url::Url> {
-        url::Url::parse(self.backend_basic.url.as_str())
-            .ok()
-            .and_then(|url| {
-                if url.scheme().contains("mongo") {
-                    Some(url)
-                } else {
-                    None
-                }
-            })
     }
 }
 

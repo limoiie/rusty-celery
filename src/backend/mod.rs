@@ -38,6 +38,7 @@ pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
 
 pub struct BackendBasic {
     pub url: String,
+    pub safe_url: String,
     pub result_serializer: SerializerKind,
     pub expiration_in_seconds: Option<u32>,
     pub cache: Arc<Mutex<RefCell<HashMap<String, TaskMeta>>>>,
@@ -47,6 +48,7 @@ impl BackendBasic {
     pub fn new(backend_url: &str) -> BackendBasic {
         Self {
             url: backend_url.to_owned(),
+            safe_url: backend_url.to_owned(),
             result_serializer: SerializerKind::JSON,
             expiration_in_seconds: None,
             cache: Arc::new(Mutex::new(RefCell::new(HashMap::new()))),
@@ -55,31 +57,10 @@ impl BackendBasic {
 }
 
 #[async_trait]
-pub trait BackendBuilder: Sized {
-    type Backend: Backend;
-
-    fn new(backend_url: &str) -> Self;
-
-    fn backend_basic(&mut self) -> &mut BackendBasic;
-
-    fn config(mut self, config: BackendConfig) -> Self {
-        self.backend_basic().result_serializer = config.result_serializer;
-        self.backend_basic().expiration_in_seconds =
-            config.result_expires.map(|d| d.num_seconds() as u32);
-        self.backend_basic().url = config.url;
-        self
-    }
-
-    async fn build(self) -> Result<Self::Backend, BackendError>;
-}
-
-#[async_trait]
 pub trait Backend: Send + Sync + Sized {
     type Builder: BackendBuilder<Backend = Self>;
 
     fn basic(&self) -> &BackendBasic;
-
-    fn safe_url(&self) -> String;
 
     async fn wait_for(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta>;
 
@@ -149,4 +130,41 @@ pub trait Backend: Send + Sync + Sized {
     // fn restore_group(&self, group_id, cache=True)
     // fn save_group(&self, group_id, result)
     // fn delete_group(&self, group_id)
+}
+
+#[async_trait]
+pub trait BackendBuilder: Sized {
+    type Backend: Backend;
+
+    fn new(backend_url: &str) -> Self;
+
+    fn backend_basic(&mut self) -> &mut BackendBasic;
+
+    fn parse_url(&self) -> Option<url::Url>;
+
+    fn config(mut self, config: BackendConfig) -> Self {
+        let safe_url = match self.parse_url() {
+            Some(url) => format!(
+                "{}://{}:***@{}:{}/{}",
+                url.scheme(),
+                url.username(),
+                url.host_str().unwrap(),
+                url.port().unwrap(),
+                url.path(),
+            ),
+            None => {
+                log::error!("Invalid redis url.");
+                String::from("")
+            }
+        };
+
+        self.backend_basic().url = config.url;
+        self.backend_basic().safe_url = safe_url;
+        self.backend_basic().result_serializer = config.result_serializer;
+        self.backend_basic().expiration_in_seconds =
+            config.result_expires.map(|d| d.num_seconds() as u32);
+        self
+    }
+
+    async fn build(self) -> Result<Self::Backend, BackendError>;
 }

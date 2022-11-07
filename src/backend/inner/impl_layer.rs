@@ -18,8 +18,6 @@ pub trait ImplLayer: Send + Sync + Sized {
 
     fn basic_(&self) -> &BackendBasic;
 
-    fn safe_url_(&self) -> String;
-
     async fn wait_for_(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta> {
         let interval = option
             .interval
@@ -204,10 +202,6 @@ impl<L: ImplLayer> Backend for L {
 
     fn basic(&self) -> &BackendBasic {
         self.basic_()
-    }
-
-    fn safe_url(&self) -> String {
-        self.safe_url_()
     }
 
     async fn wait_for(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta> {
