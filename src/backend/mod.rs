@@ -13,24 +13,20 @@ use crate::backend::options::{
 use crate::config::BackendConfig;
 use crate::error::{BackendError, TraceError};
 use crate::kombu_serde::SerializerKind;
-use crate::states::State;
+use crate::protocol::{State, TaskId, TaskMeta};
 use crate::task::{Request, Task};
 
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
 pub use self::mongodb::{MongoDbBackend, MongoDbBackendBuilder};
 pub use self::redis::{RedisBackend, RedisBackendBuilder};
-pub use self::task_meta::TaskMeta;
 
 mod disabled;
 mod inner;
 mod mongodb;
 pub mod options;
 mod redis;
-mod task_meta;
 
 type Exc = TraceError;
-type TaskId = String;
-type Traceback = ();
 
 pub type TaskResult<D> = Result<D, Exc>;
 pub type BackendResult<D> = Result<D, BackendError>;

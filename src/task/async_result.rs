@@ -7,8 +7,8 @@ use serde::Deserialize;
 use tokio::sync::Mutex;
 
 use crate::backend::options::WaitForOptions;
-use crate::backend::{Backend, GetTaskResult, TaskMeta};
-use crate::states::State;
+use crate::backend::{Backend, GetTaskResult};
+use crate::protocol::{State, TaskMeta};
 
 /// An [`AsyncResult`] is a handle for the result of a task.
 #[derive(Debug, Clone)]

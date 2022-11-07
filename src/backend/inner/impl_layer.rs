@@ -5,11 +5,9 @@ use crate::backend::options::{
     MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkRevokeOptions, MarkStartOptions,
     StoreOptions, WaitForOptions,
 };
-use crate::backend::{
-    Backend, BackendBasic, BackendBuilder, BackendResult, TaskId, TaskMeta, TaskResult,
-};
+use crate::backend::{Backend, BackendBasic, BackendBuilder, BackendResult, TaskResult};
 use crate::error::{BackendError, TaskError, TraceError};
-use crate::states::State;
+use crate::protocol::{State, TaskId, TaskMeta};
 use crate::task::{Request, Task};
 
 #[async_trait]

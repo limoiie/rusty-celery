@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use tokio::sync::MutexGuard;
 
-use crate::backend::{BackendBasic, TaskId, TaskMeta};
+use crate::backend::BackendBasic;
+use crate::protocol::{TaskId, TaskMeta};
 
 #[async_trait]
 pub trait BackendBasicLayer: Send + Sync + Sized {

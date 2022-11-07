@@ -4,17 +4,20 @@
 //! top of the protocol for a broker. This is why a broker's [`Delivery`](crate::broker::Broker::Delivery)
 //! type must implement [`TryCreateMessage`].
 
+use std::collections::HashSet;
+use std::convert::TryFrom;
+use std::process;
+use std::time::SystemTime;
+
 use chrono::{DateTime, Duration, Utc};
 use log::{debug, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, from_value, json, Value};
-use std::convert::TryFrom;
-use std::process;
-use std::time::SystemTime;
 use uuid::Uuid;
 
 use crate::error::{ContentTypeError, ProtocolError};
+use crate::kombu_serde::AnyValue;
 use crate::task::{Signature, Task};
 
 static ORIGIN: Lazy<Option<String>> = Lazy::new(|| {
@@ -720,3 +723,133 @@ impl Delivery {
 
 #[cfg(test)]
 mod tests;
+
+/// Task execution status.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum State {
+    SUCCESS,
+    FAILURE,
+    IGNORED,
+    REVOKED,
+    STARTED,
+    RECEIVED,
+    REJECTED,
+    RETRY,
+    #[default]
+    PENDING,
+}
+
+/// A set of all the ready/finished status.
+pub static READY_STATES: Lazy<HashSet<State>> =
+    Lazy::new(|| HashSet::from([State::SUCCESS, State::FAILURE, State::REVOKED]));
+
+/// A set of all the exception status.
+pub static EXCEPTION_STATES: Lazy<HashSet<State>> =
+    Lazy::new(|| HashSet::from([State::RETRY, State::FAILURE, State::REVOKED]));
+
+/// A set of all the ready status.
+pub static PROPAGATE_STATES: Lazy<HashSet<State>> =
+    Lazy::new(|| HashSet::from([State::FAILURE, State::REVOKED]));
+
+impl State {
+    /// Check if status is ready/finished.
+    pub fn is_ready(&self) -> bool {
+        READY_STATES.contains(self)
+    }
+
+    /// Check if status is exceptional.
+    pub fn is_exception(&self) -> bool {
+        EXCEPTION_STATES.contains(self)
+    }
+
+    /// Check if status is successful.
+    pub fn is_successful(&self) -> bool {
+        matches!(self, State::SUCCESS)
+    }
+}
+
+pub type TaskId = String;
+pub type Traceback = ();
+
+/// Task meta information.
+///
+/// [crate::protocol::TaskMeta] traces the execution information about a task. It will be maintained
+/// by [crate::backend::Backend].
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TaskMeta {
+    /// Task id which is an ObjectId.
+    pub task_id: TaskId,
+
+    /// Task execution status.
+    pub status: State,
+
+    /// Serialized result.
+    ///
+    /// Either be the returned value, or be an exception.
+    pub result: AnyValue,
+
+    /// Traceback when there was an exception.
+    pub traceback: Option<Traceback>,
+
+    /// Children tasks of this task.
+    pub children: Vec<String>,
+
+    /// The date time when task status turned into ready.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date_done: Option<String>,
+
+    /// The group id for this task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
+
+    /// The task id of this task's parent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+
+    /// Task name.
+    ///
+    /// This will be the task function's name by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// The serialized args passed into the task function.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<u8>>,
+
+    /// The serialized kwargs passed into the task function.
+    ///
+    /// In the domain of rust driver, this field should be avoid since no optional keyword args
+    /// in rust. PS: we can hack this by passing kwargs as the last hashmap arg into the task
+    /// function.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kwargs: Option<Vec<u8>>,
+
+    /// The worker who executes this task.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
+
+    /// The number of retry times when there was excepted exception.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
+
+    /// The queue to which this task belong.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
+}
+
+impl TaskMeta {
+    /// Check if the task is ready/finished.
+    pub fn is_ready(&self) -> bool {
+        self.status.is_ready()
+    }
+
+    /// Check if the task is exceptional.
+    pub fn is_exception(&self) -> bool {
+        self.status.is_exception()
+    }
+
+    /// Check if the task is successful.
+    pub fn is_successful(&self) -> bool {
+        self.status.is_successful()
+    }
+}

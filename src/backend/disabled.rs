@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::inner::impl_layer::ImplLayer;
 use crate::backend::options::StoreOptions;
-use crate::backend::{BackendBasic, BackendBuilder, TaskId, TaskMeta, TaskResult};
+use crate::backend::{BackendBasic, BackendBuilder, TaskResult};
 use crate::error::BackendError;
 use crate::prelude::Task;
-use crate::states::State;
+use crate::protocol::{State, TaskId, TaskMeta};
 
 pub struct DisabledBackend {
     backend_basic: BackendBasic,

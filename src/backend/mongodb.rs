@@ -5,10 +5,10 @@ use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
-use crate::backend::{BackendBasic, BackendBuilder, TaskId, TaskMeta, Traceback};
+use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
-use crate::states::State;
+use crate::protocol::{State, TaskId, TaskMeta, Traceback};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MongoTaskMeta {

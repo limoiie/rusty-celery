@@ -1,7 +1,7 @@
 use crate::backend::{Exc, TaskResult};
 use crate::error::TaskError;
 use crate::kombu_serde::{AnyValue, SerializerKind};
-use crate::states::State;
+use crate::protocol::State;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

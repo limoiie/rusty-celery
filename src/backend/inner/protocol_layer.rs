@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, ImplLayer};
 use crate::backend::options::StoreOptions;
-use crate::backend::{Backend, BackendBasic, BackendBuilder, TaskId, TaskMeta, TaskResult};
+use crate::backend::{Backend, BackendBasic, BackendBuilder, TaskResult};
 use crate::kombu_serde::AnyValue;
 use crate::prelude::Task;
-use crate::states::State;
+use crate::protocol::{State, TaskId, TaskMeta};
 
 #[async_trait]
 pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {

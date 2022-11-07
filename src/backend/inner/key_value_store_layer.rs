@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use bstr::ByteVec;
 
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
-use crate::backend::{BackendBuilder, TaskId, TaskMeta};
-use crate::states::State;
+use crate::backend::BackendBuilder;
+use crate::protocol::TaskId;
+use crate::protocol::{State, TaskMeta};
 
 pub type Key = String;
 
