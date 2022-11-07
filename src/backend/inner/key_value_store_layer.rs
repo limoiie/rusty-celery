@@ -2,18 +2,17 @@ use async_trait::async_trait;
 use bstr::ByteVec;
 
 use crate::backend::{
-    BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer, StoreOption, TaskId, TaskMeta,
+    BackendBasicLayer, BackendBuilder, BackendProtocolLayer, BackendSerdeLayer, StoreOptions,
+    TaskId, TaskMeta,
 };
 use crate::kombu_serde::AnyValue;
 use crate::states::State;
 use crate::task::Task;
 
-use super::BackendBuilder;
-
 pub type Key = String;
 
 #[async_trait]
-pub trait BaseKeyValueStore: Send + Sync + Sized {
+pub trait KeyValueStoreLayer: Send + Sync + Sized {
     type Builder: BackendBuilder<Backend = Self>;
 
     const KEY_PREFIX_TASK: &'static str = "celery-task-meta-";
@@ -22,31 +21,31 @@ pub trait BaseKeyValueStore: Send + Sync + Sized {
 
     const KEY_PREFIX_CHORD: &'static str = "chord-unlock-";
 
-    async fn get(&self, key: Key) -> Option<Vec<u8>>;
+    async fn _get(&self, key: Key) -> Option<Vec<u8>>;
 
-    async fn mget(&self, keys: &[Key]) -> Option<Vec<Vec<u8>>>;
+    async fn _mget(&self, keys: &[Key]) -> Option<Vec<Vec<u8>>>;
 
-    async fn set(&self, key: Key, value: &[u8]) -> Option<()>;
+    async fn _set(&self, key: Key, value: &[u8]) -> Option<()>;
 
-    async fn delete(&self, key: Key) -> Option<u32>;
+    async fn _delete(&self, key: Key) -> Option<u32>;
 
-    async fn incr(&self, key: Key) -> Option<i32>;
+    async fn _incr(&self, key: Key) -> Option<i32>;
 
-    async fn expire(&self, key: Key, value: u32) -> Option<bool>;
+    async fn _expire(&self, key: Key, value: u32) -> Option<bool>;
 
     async fn _set_with_state(&self, key: Key, value: &[u8], _state: State) -> Option<()> {
-        self.set(key, value).await
+        self._set(key, value).await
     }
 
-    fn get_key_for_task(&self, task_id: &TaskId, key: Option<Key>) -> String {
+    fn _get_key_for_task(&self, task_id: &TaskId, key: Option<Key>) -> String {
         self._get_key_for(Self::KEY_PREFIX_TASK, task_id, key)
     }
 
-    fn get_key_for_group(&self, group_id: &TaskId, key: Option<Key>) -> String {
+    fn _get_key_for_group(&self, group_id: &TaskId, key: Option<Key>) -> String {
         self._get_key_for(Self::KEY_PREFIX_GROUP, group_id, key)
     }
 
-    fn get_key_for_chord(&self, group_id: &TaskId, key: Option<Key>) -> String {
+    fn _get_key_for_chord(&self, group_id: &TaskId, key: Option<Key>) -> String {
         self._get_key_for(Self::KEY_PREFIX_CHORD, group_id, key)
     }
 
@@ -71,7 +70,7 @@ pub trait BaseKeyValueStore: Send + Sync + Sized {
 #[async_trait]
 impl<B> BackendProtocolLayer for B
 where
-    B: BaseKeyValueStore + BackendBasicLayer + BackendSerdeLayer,
+    B: KeyValueStoreLayer + BackendBasicLayer + BackendSerdeLayer,
 {
     type Builder = B::Builder;
 
@@ -80,19 +79,19 @@ where
         task_id: &TaskId,
         data: AnyValue,
         status: State,
-        option: &StoreOption<T>,
+        option: &StoreOptions<T>,
     ) where
         T: Task,
     {
-        let task_meta = Self::__make_task_meta(task_id.clone(), data, status, option).await;
+        let task_meta = Self::_make_task_meta(task_id.clone(), data, status, option).await;
 
-        let remote_task_meta = self.__fetch_task_meta_by(task_id).await;
+        let remote_task_meta = self._fetch_task_meta_by(task_id).await;
         if !remote_task_meta.status.is_successful() {
-            let data = self.encode(&task_meta);
+            let data = self._encode(&task_meta);
             log::debug!("Store task meta: {}", data);
 
             self._set_with_state(
-                self.get_key_for_task(task_id, None),
+                self._get_key_for_task(task_id, None),
                 data.as_bytes(),
                 status,
             )
@@ -100,29 +99,29 @@ where
         }
     }
 
-    async fn __forget_task_meta_by(&self, task_id: &TaskId) {
-        self.delete(self.get_key_for_task(task_id, None))
+    async fn _forget_task_meta_by(&self, task_id: &TaskId) {
+        self._delete(self._get_key_for_task(task_id, None))
             .await
             .unwrap();
     }
 
-    async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta {
-        if let Some(meta) = self.get(self.get_key_for_task(task_id, None)).await {
+    async fn _fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta {
+        if let Some(meta) = self._get(self._get_key_for_task(task_id, None)).await {
             if !meta.is_empty() {
-                return self.__decode_task_meta(meta.into_string_lossy());
+                return self._decode_task_meta(meta.into_string_lossy());
             }
         }
 
         TaskMeta {
             status: State::PENDING,
-            result: self.serializer().data_to_value(&None::<()>),
+            result: self._serializer().data_to_value(&None::<()>),
             ..TaskMeta::default()
         }
     }
 
-    fn __decode_task_meta(&self, payload: String) -> TaskMeta {
+    fn _decode_task_meta(&self, payload: String) -> TaskMeta {
         // todo:
         //   convert exception to rust exception
-        self.decode::<TaskMeta>(payload)
+        self._decode::<TaskMeta>(payload)
     }
 }

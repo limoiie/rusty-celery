@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::backend::common::basic_layer::BackendBasic;
 use crate::config::BackendConfig;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -10,17 +9,18 @@ use crate::error::{BackendError, TaskError, TraceError};
 use crate::states::State;
 use crate::task::{Request, Task};
 
-pub use self::common::basic_layer::BackendBasicLayer;
-pub use self::common::protocol_layer::BackendProtocolLayer;
-pub use self::common::serde_layer::BackendSerdeLayer;
-pub use self::common::task_meta::TaskMeta;
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
+pub use self::inner::basic_layer::BackendBasic;
+pub use self::inner::basic_layer::BackendBasicLayer;
+pub use self::inner::key_value_store_layer::KeyValueStoreLayer;
+pub use self::inner::protocol_layer::BackendProtocolLayer;
+pub use self::inner::serde_layer::BackendSerdeLayer;
+pub use self::inner::task_meta::TaskMeta;
 pub use self::mongodb::{MongoDbBackend, MongoDbBackendBuilder};
 pub use self::redis::{RedisBackend, RedisBackendBuilder};
 
-mod common;
 mod disabled;
-mod key_value_store;
+mod inner;
 mod mongodb;
 mod redis;
 
@@ -31,13 +31,32 @@ type Traceback = ();
 pub type TaskResult<D> = Result<D, Exc>;
 pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
 
+#[async_trait]
+pub trait BackendBuilder: Sized {
+    type Backend: Backend;
+
+    fn new(backend_url: &str) -> Self;
+
+    fn backend_basic(&mut self) -> &mut BackendBasic;
+
+    fn config(mut self, config: BackendConfig) -> Self {
+        self.backend_basic().result_serializer = config.result_serializer;
+        self.backend_basic().expiration_in_seconds =
+            config.result_expires.map(|d| d.num_seconds() as u32);
+        self.backend_basic().url = config.url;
+        self
+    }
+
+    async fn build(self) -> Result<Self::Backend, BackendError>;
+}
+
 #[derive(Clone, Default)]
-pub struct StoreOption<'request, T: Task> {
+pub struct StoreOptions<'request, T: Task> {
     traceback: Option<Traceback>,
     request: Option<&'request Request<T>>,
 }
 
-impl<'require, T: Task> StoreOption<'require, T> {
+impl<'require, T: Task> StoreOptions<'require, T> {
     pub fn with_request(request: &'require Request<T>) -> Self {
         Self {
             traceback: None,
@@ -47,25 +66,25 @@ impl<'require, T: Task> StoreOption<'require, T> {
 }
 
 #[derive(TypedBuilder)]
-pub struct MarkStartOption<'request, T: Task> {
+pub struct MarkStartOptions<'request, T: Task> {
     #[builder(default = State::STARTED)]
     status: State,
     meta: HashMap<String, String>,
-    store: StoreOption<'request, T>,
+    store: StoreOptions<'request, T>,
 }
 
 #[derive(TypedBuilder)]
-pub struct MarkDoneOption<'returns, 'request, T: Task> {
+pub struct MarkDoneOptions<'returns, 'request, T: Task> {
     #[builder(default = State::SUCCESS)]
     status: State,
     result: &'returns T::Returns,
     #[builder(default = true)]
     store_result: bool,
-    store: StoreOption<'request, T>,
+    store: StoreOptions<'request, T>,
 }
 
 #[derive(TypedBuilder)]
-pub struct MarkFailureOption<'request, T: Task> {
+pub struct MarkFailureOptions<'request, T: Task> {
     #[builder(default = State::FAILURE)]
     status: State,
     exc: Exc,
@@ -73,25 +92,25 @@ pub struct MarkFailureOption<'request, T: Task> {
     call_errbacks: bool,
     #[builder(default = true)]
     store_result: bool,
-    store: StoreOption<'request, T>,
+    store: StoreOptions<'request, T>,
 }
 
 #[derive(TypedBuilder)]
-pub struct MarkRevokeOption<'request, T: Task> {
+pub struct MarkRevokeOptions<'request, T: Task> {
     #[builder(default = State::REVOKED)]
     status: State,
     reason: String,
     #[builder(default = true)]
     store_result: bool,
-    store: StoreOption<'request, T>,
+    store: StoreOptions<'request, T>,
 }
 
 #[derive(TypedBuilder)]
-pub struct MarkRetryOption<'request, T: Task> {
+pub struct MarkRetryOptions<'request, T: Task> {
     #[builder(default = State::RETRY)]
     status: State,
     exc: Exc,
-    store: StoreOption<'request, T>,
+    store: StoreOptions<'request, T>,
 }
 
 #[async_trait]
@@ -136,7 +155,7 @@ pub trait Backend: Send + Sync + Sized {
         }
     }
 
-    async fn mark_as_started<'s, T>(&'s self, task_id: &TaskId, option: MarkStartOption<'s, T>)
+    async fn mark_as_started<'s, T>(&'s self, task_id: &TaskId, option: MarkStartOptions<'s, T>)
     where
         T: Task,
     {
@@ -145,7 +164,7 @@ pub trait Backend: Send + Sync + Sized {
             .await
     }
 
-    async fn mark_as_done<'s, 'r, T>(&'s self, task_id: &TaskId, option: MarkDoneOption<'s, 'r, T>)
+    async fn mark_as_done<'s, 'r, T>(&'s self, task_id: &TaskId, option: MarkDoneOptions<'s, 'r, T>)
     where
         T: Task,
     {
@@ -170,7 +189,7 @@ pub trait Backend: Send + Sync + Sized {
         }
     }
 
-    async fn mark_as_failure<'s, T>(&'s self, task_id: &TaskId, option: MarkFailureOption<'s, T>)
+    async fn mark_as_failure<'s, T>(&'s self, task_id: &TaskId, option: MarkFailureOptions<'s, T>)
     where
         T: Task,
     {
@@ -193,7 +212,7 @@ pub trait Backend: Send + Sync + Sized {
         }
     }
 
-    async fn mark_as_revoked<'s, T>(&'s self, task_id: &TaskId, option: MarkRevokeOption<'s, T>)
+    async fn mark_as_revoked<'s, T>(&'s self, task_id: &TaskId, option: MarkRevokeOptions<'s, T>)
     where
         T: Task,
     {
@@ -212,7 +231,7 @@ pub trait Backend: Send + Sync + Sized {
         }
     }
 
-    async fn mark_as_retry<'s, T>(&'s self, task_id: &TaskId, option: MarkRetryOption<'s, T>)
+    async fn mark_as_retry<'s, T>(&'s self, task_id: &TaskId, option: MarkRetryOptions<'s, T>)
     where
         T: Task,
     {
@@ -229,7 +248,7 @@ pub trait Backend: Send + Sync + Sized {
         task_id: &TaskId,
         result: TaskResult<D>,
         status: State,
-        store: &StoreOption<T>,
+        store: &StoreOptions<T>,
     ) where
         D: Serialize + Send + Sync,
         T: Task;
@@ -272,25 +291,6 @@ pub trait Backend: Send + Sync + Sized {
     //   fn restore_group(&self, group_id, cache=True)
     //   fn save_group(&self, group_id, result)
     //   fn delete_group(&self, group_id)
-}
-
-#[async_trait]
-pub trait BackendBuilder: Sized {
-    type Backend: Backend;
-
-    fn new(backend_url: &str) -> Self;
-
-    fn backend_basic(&mut self) -> &mut BackendBasic;
-
-    fn config(mut self, config: BackendConfig) -> Self {
-        self.backend_basic().result_serializer = config.result_serializer;
-        self.backend_basic().expiration_in_seconds =
-            config.result_expires.map(|d| d.num_seconds() as u32);
-        self.backend_basic().url = config.url;
-        self
-    }
-
-    async fn build(self) -> Result<Self::Backend, BackendError>;
 }
 
 #[cfg(test)]

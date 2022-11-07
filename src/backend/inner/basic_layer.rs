@@ -1,11 +1,10 @@
-use crate::backend::TaskMeta;
+use crate::backend::{TaskId, TaskMeta};
 use crate::kombu_serde::SerializerKind;
 use async_trait::async_trait;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard};
-use crate::backend::key_value_store::Key;
 
 pub struct BackendBasic {
     pub url: String,
@@ -30,7 +29,7 @@ pub trait BackendBasicLayer: Send + Sync + Sized {
     fn backend_basic(&self) -> &BackendBasic;
 
     fn _safe_url(&self) -> String {
-        match self.parse_url() {
+        match self._parse_url() {
             Some(url) => format!(
                 "{}://{}:***@{}:{}/{}",
                 url.scheme(),
@@ -46,35 +45,35 @@ pub trait BackendBasicLayer: Send + Sync + Sized {
         }
     }
 
-    fn parse_url(&self) -> Option<url::Url>;
+    fn _parse_url(&self) -> Option<url::Url>;
 
-    fn expires_in_seconds(&self) -> Option<u32> {
+    fn _expires_in_seconds(&self) -> Option<u32> {
         self.backend_basic().expiration_in_seconds
     }
 
-    async fn cached(&self) -> MutexGuard<RefCell<HashMap<String, TaskMeta>>> {
+    async fn _cached(&self) -> MutexGuard<RefCell<HashMap<String, TaskMeta>>> {
         self.backend_basic().cache.lock().await
     }
 
-    async fn get_cached(&self, key: &Key) -> Option<TaskMeta> {
-        let guard = self.cached().await;
+    async fn _get_cached(&self, task_id: &TaskId) -> Option<TaskMeta> {
+        let guard = self._cached().await;
         let cached = guard.borrow();
-        cached.get(key).map(Clone::clone)
+        cached.get(task_id).map(Clone::clone)
     }
 
-    async fn set_cached(&self, key: Key, val: TaskMeta) -> Option<TaskMeta> {
-        let mut guard = self.cached().await;
-        guard.get_mut().insert(key, val)
+    async fn _set_cached(&self, task_id: TaskId, val: TaskMeta) -> Option<TaskMeta> {
+        let mut guard = self._cached().await;
+        guard.get_mut().insert(task_id, val)
     }
 
-    async fn del_cached(&self, key: &Key) -> Option<TaskMeta> {
-        let mut guard = self.cached().await;
-        guard.get_mut().remove(key)
+    async fn _del_cached(&self, task_id: &TaskId) -> Option<TaskMeta> {
+        let mut guard = self._cached().await;
+        guard.get_mut().remove(task_id)
     }
 
-    async fn is_cached(&self, key: &Key) -> bool {
-        let guard = self.cached().await;
+    async fn _is_cached(&self, task_id: &TaskId) -> bool {
+        let guard = self._cached().await;
         let cached = guard.borrow();
-        cached.contains_key(key)
+        cached.contains_key(task_id)
     }
 }

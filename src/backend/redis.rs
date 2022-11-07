@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use redis::aio::ConnectionManager;
 use redis::Client;
 
-use crate::backend::common::basic_layer::BackendBasic;
-use crate::backend::key_value_store::{BaseKeyValueStore, Key};
+use crate::backend::inner::basic_layer::BackendBasic;
+use crate::backend::inner::key_value_store_layer::{Key, KeyValueStoreLayer};
 use crate::backend::{BackendBasicLayer, BackendBuilder, BackendSerdeLayer};
 use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
@@ -45,7 +45,7 @@ impl BackendBuilder for RedisBackendBuilder {
 }
 
 impl BackendSerdeLayer for RedisBackend {
-    fn serializer(&self) -> SerializerKind {
+    fn _serializer(&self) -> SerializerKind {
         self.backend_basic.result_serializer
     }
 }
@@ -56,7 +56,7 @@ impl BackendBasicLayer for RedisBackend {
         &self.backend_basic
     }
 
-    fn parse_url(&self) -> Option<url::Url> {
+    fn _parse_url(&self) -> Option<url::Url> {
         redis::parse_redis_url(&self.backend_basic.url[..])
     }
 }
@@ -64,10 +64,10 @@ impl BackendBasicLayer for RedisBackend {
 const MAX_BYTES: usize = 536870912;
 
 #[async_trait]
-impl BaseKeyValueStore for RedisBackend {
+impl KeyValueStoreLayer for RedisBackend {
     type Builder = RedisBackendBuilder;
 
-    async fn get(&self, key: Key) -> Option<Vec<u8>> {
+    async fn _get(&self, key: Key) -> Option<Vec<u8>> {
         redis::cmd("GET")
             .arg(&key)
             .query_async(&mut self.manager.clone())
@@ -75,7 +75,7 @@ impl BaseKeyValueStore for RedisBackend {
             .ok()
     }
 
-    async fn mget(&self, keys: &[Key]) -> Option<Vec<Vec<u8>>> {
+    async fn _mget(&self, keys: &[Key]) -> Option<Vec<Vec<u8>>> {
         redis::cmd("MGET")
             .arg(keys)
             .query_async(&mut self.manager.clone())
@@ -83,7 +83,7 @@ impl BaseKeyValueStore for RedisBackend {
             .ok()
     }
 
-    async fn set(&self, key: Key, value: &[u8]) -> Option<()> {
+    async fn _set(&self, key: Key, value: &[u8]) -> Option<()> {
         if value.len() > MAX_BYTES {
             panic!("Value too long for Redis Backend.")
         }
@@ -108,7 +108,7 @@ impl BaseKeyValueStore for RedisBackend {
             .ok()
     }
 
-    async fn delete(&self, key: Key) -> Option<u32> {
+    async fn _delete(&self, key: Key) -> Option<u32> {
         redis::cmd("DEL")
             .arg(&key)
             .query_async(&mut self.manager.clone())
@@ -116,7 +116,7 @@ impl BaseKeyValueStore for RedisBackend {
             .ok()
     }
 
-    async fn incr(&self, key: Key) -> Option<i32> {
+    async fn _incr(&self, key: Key) -> Option<i32> {
         redis::cmd("INCR")
             .arg(&key)
             .query_async(&mut self.manager.clone())
@@ -124,7 +124,7 @@ impl BaseKeyValueStore for RedisBackend {
             .ok()
     }
 
-    async fn expire(&self, key: Key, value: u32) -> Option<bool> {
+    async fn _expire(&self, key: Key, value: u32) -> Option<bool> {
         redis::cmd("EXPIRE")
             .arg(&key)
             .arg(value)

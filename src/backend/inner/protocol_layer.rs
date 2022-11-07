@@ -1,5 +1,5 @@
 use crate::backend::{
-    Backend, BackendBasicLayer, BackendBuilder, BackendSerdeLayer, StoreOption, TaskId, TaskMeta,
+    Backend, BackendBasicLayer, BackendBuilder, BackendSerdeLayer, StoreOptions, TaskId, TaskMeta,
     TaskResult,
 };
 use crate::kombu_serde::AnyValue;
@@ -18,36 +18,36 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
         task_id: &TaskId,
         data: AnyValue,
         status: State,
-        option: &StoreOption<T>,
+        option: &StoreOptions<T>,
     );
 
-    async fn __forget_task_meta_by(&self, task_id: &TaskId);
+    async fn _forget_task_meta_by(&self, task_id: &TaskId);
 
-    async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta;
+    async fn _fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta;
 
-    fn __decode_task_meta(&self, payload: String) -> TaskMeta;
+    fn _decode_task_meta(&self, payload: String) -> TaskMeta;
 
-    async fn __get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
+    async fn _get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.ensure_not_eager();
         if cache {
-            if let Some(meta) = self.get_cached(task_id).await {
+            if let Some(meta) = self._get_cached(task_id).await {
                 return meta;
             }
         }
 
-        let meta = self.__fetch_task_meta_by(task_id).await;
+        let meta = self._fetch_task_meta_by(task_id).await;
         if cache && meta.status == State::SUCCESS {
-            self.set_cached(task_id.clone(), meta.clone()).await;
+            self._set_cached(task_id.clone(), meta.clone()).await;
         }
 
         return meta;
     }
 
-    async fn __make_task_meta<T>(
+    async fn _make_task_meta<T>(
         task_id: TaskId,
         result: AnyValue,
         status: State,
-        option: &StoreOption<T>,
+        option: &StoreOptions<T>,
     ) -> TaskMeta
     where
         T: Task,
@@ -77,9 +77,9 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
         }
     }
 
-    async fn __reload_task_meta(&mut self, task_id: &TaskId) -> Option<TaskMeta> {
-        let meta = self.__get_task_meta(task_id, false).await;
-        self.set_cached(task_id.clone(), meta).await
+    async fn _reload_task_meta(&mut self, task_id: &TaskId) -> Option<TaskMeta> {
+        let meta = self._get_task_meta(task_id, false).await;
+        self._set_cached(task_id.clone(), meta).await
     }
 }
 
@@ -92,19 +92,19 @@ impl<B: BackendProtocolLayer> Backend for B {
     }
 
     async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
-        self.__get_task_meta(task_id, cache).await
+        self._get_task_meta(task_id, cache).await
     }
 
     fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
-        self.recover_result(task_meta.result, task_meta.status)
+        self._recover_result(task_meta.result, task_meta.status)
     }
 
     async fn forget(&self, task_id: &TaskId) {
-        self.del_cached(task_id).await;
-        self.__forget_task_meta_by(task_id).await
+        self._del_cached(task_id).await;
+        self._forget_task_meta_by(task_id).await
     }
 
     async fn store_result<D, T>(
@@ -112,12 +112,12 @@ impl<B: BackendProtocolLayer> Backend for B {
         task_id: &TaskId,
         result: TaskResult<D>,
         status: State,
-        option: &StoreOption<T>,
+        option: &StoreOptions<T>,
     ) where
         D: Serialize + Send + Sync,
         T: Task,
     {
-        let data = self.prepare_result(result, status);
+        let data = self._prepare_result(result, status);
         self._store_result(task_id, data, status, option).await;
     }
 }

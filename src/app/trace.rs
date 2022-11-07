@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Duration, Instant};
 
 use crate::backend::{
-    Backend, MarkDoneOption, MarkFailureOption, MarkRetryOption, MarkStartOption, StoreOption,
+    Backend, MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkStartOptions, StoreOptions,
 };
 use crate::error::{ProtocolError, TaskError, TraceError};
 use crate::protocol::Message;
@@ -81,7 +81,7 @@ where
         self.backend
             .mark_as_started(
                 uuid,
-                MarkStartOption::builder()
+                MarkStartOptions::builder()
                     .meta(HashMap::from([
                         ("pid".to_owned(), std::process::id().to_string()),
                         (
@@ -89,7 +89,7 @@ where
                             self.task.request().hostname.as_ref().unwrap().into(),
                         ),
                     ]))
-                    .store(StoreOption::with_request(self.task.request()))
+                    .store(StoreOptions::with_request(self.task.request()))
                     .build(),
             )
             .await;
@@ -129,10 +129,10 @@ where
                 self.backend
                     .mark_as_done(
                         uuid,
-                        MarkDoneOption::builder()
+                        MarkDoneOptions::builder()
                             .result(&returned)
                             .store_result(publish_result)
-                            .store(StoreOption::with_request(self.task.request()))
+                            .store(StoreOptions::with_request(self.task.request()))
                             .build(),
                     )
                     .await;
@@ -202,9 +202,9 @@ where
                 let mark_as_failure = || {
                     self.backend.mark_as_failure(
                         uuid,
-                        MarkFailureOption::builder()
+                        MarkFailureOptions::builder()
                             .exc(exc.clone())
-                            .store(StoreOption::with_request(self.task.request()))
+                            .store(StoreOptions::with_request(self.task.request()))
                             .store_result(true)
                             .call_errbacks(false)
                             .build(),
@@ -247,9 +247,9 @@ where
                 self.backend
                     .mark_as_retry(
                         uuid,
-                        MarkRetryOption::builder()
+                        MarkRetryOptions::builder()
                             .exc(exc)
-                            .store(StoreOption::with_request(self.task.request()))
+                            .store(StoreOptions::with_request(self.task.request()))
                             .build(),
                     )
                     .await;

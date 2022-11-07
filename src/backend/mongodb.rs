@@ -1,6 +1,6 @@
 use crate::backend::{
     BackendBasic, BackendBasicLayer, BackendBuilder, BackendProtocolLayer, BackendSerdeLayer,
-    StoreOption, TaskId, TaskMeta, Traceback,
+    StoreOptions, TaskId, TaskMeta, Traceback,
 };
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, SerializerKind};
@@ -143,7 +143,7 @@ impl BackendBasicLayer for MongoDbBackend {
         &self.backend_basic
     }
 
-    fn parse_url(&self) -> Option<url::Url> {
+    fn _parse_url(&self) -> Option<url::Url> {
         url::Url::parse(self.backend_basic.url.as_str())
             .ok()
             .and_then(|url| {
@@ -157,7 +157,7 @@ impl BackendBasicLayer for MongoDbBackend {
 }
 
 impl BackendSerdeLayer for MongoDbBackend {
-    fn serializer(&self) -> SerializerKind {
+    fn _serializer(&self) -> SerializerKind {
         self.backend_basic.result_serializer
     }
 }
@@ -171,13 +171,13 @@ impl BackendProtocolLayer for MongoDbBackend {
         task_id: &TaskId,
         data: AnyValue,
         status: State,
-        option: &StoreOption<T>,
+        option: &StoreOptions<T>,
     ) where
         T: Task,
     {
         let task_meta = MongoTaskMeta::from_task_meta(
-            Self::__make_task_meta(task_id.clone(), data, status, option).await,
-            self.serializer(),
+            Self::_make_task_meta(task_id.clone(), data, status, option).await,
+            self._serializer(),
         );
 
         let opt = FindOneAndReplaceOptions::builder().upsert(true).build();
@@ -188,14 +188,14 @@ impl BackendProtocolLayer for MongoDbBackend {
             .unwrap();
     }
 
-    async fn __forget_task_meta_by(&self, task_id: &TaskId) {
+    async fn _forget_task_meta_by(&self, task_id: &TaskId) {
         self.collection()
             .delete_one(doc! {"_id": task_id}, None)
             .await
             .unwrap();
     }
 
-    async fn __fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta {
+    async fn _fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta {
         let mut cursor = self
             .collection()
             .find(doc! {"_id": task_id}, None)
@@ -206,17 +206,17 @@ impl BackendProtocolLayer for MongoDbBackend {
             return cursor
                 .deserialize_current()
                 .unwrap()
-                .into_task_meta(self.serializer());
+                .into_task_meta(self._serializer());
         }
 
         TaskMeta {
             status: State::PENDING,
-            result: self.serializer().data_to_value(&None::<()>),
+            result: self._serializer().data_to_value(&None::<()>),
             ..TaskMeta::default()
         }
     }
 
-    fn __decode_task_meta(&self, _payload: String) -> TaskMeta {
+    fn _decode_task_meta(&self, _payload: String) -> TaskMeta {
         unimplemented!(
             "TaskMeta is not stored as serialized in MongoDbBackend, \
 hence never need to decode it as a whole."

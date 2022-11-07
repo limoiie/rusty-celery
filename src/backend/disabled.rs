@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::common::basic_layer::BackendBasic;
-use crate::backend::{Backend, BackendBuilder, StoreOption, TaskId, TaskMeta, TaskResult};
+use crate::backend::{
+    Backend, BackendBasic, BackendBuilder, StoreOptions, TaskId, TaskMeta, TaskResult,
+};
 use crate::error::BackendError;
 use crate::prelude::Task;
 use crate::states::State;
@@ -64,7 +65,7 @@ impl Backend for DisabledBackend {
         task_id: &TaskId,
         result: TaskResult<D>,
         state: State,
-        store: &StoreOption<T>,
+        store: &StoreOptions<T>,
     ) where
         D: Serialize + Send + Sync,
         T: Task,

@@ -12,33 +12,33 @@ pub struct GeneralError {
 }
 
 pub trait BackendSerdeLayer: Send + Sync + Sized {
-    fn serializer(&self) -> SerializerKind;
+    fn _serializer(&self) -> SerializerKind;
 
-    fn encode<D: Serialize>(&self, data: &D) -> String {
-        self.serializer().dump(data).2
+    fn _encode<D: Serialize>(&self, data: &D) -> String {
+        self._serializer().dump(data).2
     }
 
-    fn decode<D: for<'de> Deserialize<'de>>(&self, payload: String) -> D {
-        self.serializer().load(&payload)
+    fn _decode<D: for<'de> Deserialize<'de>>(&self, payload: String) -> D {
+        self._serializer().load(&payload)
     }
 
-    fn prepare_result<D: Serialize>(&self, result: TaskResult<D>, state: State) -> AnyValue {
+    fn _prepare_result<D: Serialize>(&self, result: TaskResult<D>, state: State) -> AnyValue {
         match result {
-            Ok(ref data) => self.prepare_value(data),
-            Err(ref err) if state.is_exception() => self.prepare_exception(err),
+            Ok(ref data) => self._prepare_value(data),
+            Err(ref err) if state.is_exception() => self._prepare_exception(err),
             Err(_) => todo!(),
         }
     }
 
-    fn prepare_value<D: Serialize>(&self, result: &D) -> AnyValue {
+    fn _prepare_value<D: Serialize>(&self, result: &D) -> AnyValue {
         // todo
         //   if result is ResultBase {
         //       result.as_tuple()
         //   }
-        self.serializer().data_to_value(result)
+        self._serializer().data_to_value(result)
     }
 
-    fn prepare_exception(&self, exc: &Exc) -> AnyValue {
+    fn _prepare_exception(&self, exc: &Exc) -> AnyValue {
         let (typ, msg, module) = match exc {
             Exc::TaskError(err) => match err {
                 TaskError::ExpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
@@ -59,29 +59,29 @@ pub trait BackendSerdeLayer: Send + Sync + Sized {
             exc_module: module.into(),
         };
 
-        self.serializer().data_to_value(&exc_struct)
+        self._serializer().data_to_value(&exc_struct)
     }
 
-    fn recover_result<D>(&self, data: AnyValue, state: State) -> Option<TaskResult<D>>
+    fn _recover_result<D>(&self, data: AnyValue, state: State) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
         match state {
-            _ if state.is_exception() => Some(Err(self.recover_exception(data))),
-            _ if state.is_successful() => Some(Ok(self.recover_value(data))),
+            _ if state.is_exception() => Some(Err(self._recover_exception(data))),
+            _ if state.is_successful() => Some(Ok(self._recover_value(data))),
             _ => None,
         }
     }
 
-    fn recover_value<D>(&self, data: AnyValue) -> D
+    fn _recover_value<D>(&self, data: AnyValue) -> D
     where
         D: for<'de> Deserialize<'de>,
     {
-        self.serializer().value_to_data(data).unwrap()
+        self._serializer().value_to_data(data).unwrap()
     }
 
-    fn recover_exception(&self, data: AnyValue) -> Exc {
-        let err: GeneralError = self.serializer().value_to_data(data).unwrap();
+    fn _recover_exception(&self, data: AnyValue) -> Exc {
+        let err: GeneralError = self._serializer().value_to_data(data).unwrap();
         match err.exc_type.as_str() {
             "TaskError" => Exc::TaskError(TaskError::ExpectedError(err.exc_message)),
             "TimeoutError" => Exc::TaskError(TaskError::TimeoutError),
