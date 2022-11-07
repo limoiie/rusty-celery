@@ -32,9 +32,15 @@ pub type TaskResult<D> = Result<D, Exc>;
 pub type BackendResult<D> = Result<D, BackendError>;
 pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
 
+/// The basic part of a backend that is common for all backend implementations.
 pub struct BackendBasic {
+    /// The full url of the backend.
     pub url: String,
+
+    /// A safe version url that hides user and password.
     pub safe_url: String,
+
+    /// The [SerializerKind] that used to persistent [TaskMeta].
     pub result_serializer: SerializerKind,
 
     /// Expiration for a task result.
@@ -56,36 +62,45 @@ impl BackendBasic {
     }
 }
 
+/// A result [Backend] is used to tracing task status and the returned results.
 #[async_trait]
 pub trait Backend: Send + Sync + Sized {
     type Builder: BackendBuilder<Backend = Self>;
 
     fn basic(&self) -> &BackendBasic;
 
+    /// Wait until the task is ready, and return the [TaskMeta].
     async fn wait_for(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta>;
 
+    /// Forget the result for the given task.
     async fn forget(&self, task_id: &TaskId);
 
+    /// Mark a task as started.
     async fn mark_as_started<'s, T>(&self, task_id: &TaskId, option: MarkStartOptions<'s, T>)
     where
         T: Task;
 
+    /// Mark a task as successfully executed.
     async fn mark_as_done<'s, 'r, T>(&self, task_id: &TaskId, option: MarkDoneOptions<'s, 'r, T>)
     where
         T: Task;
 
+    /// Mark a task as executed with failure.
     async fn mark_as_failure<'s, T>(&self, task_id: &TaskId, option: MarkFailureOptions<'s, T>)
     where
         T: Task;
 
+    /// Mark a task as revoked.
     async fn mark_as_revoked<'s, T>(&self, task_id: &TaskId, option: MarkRevokeOptions<'s, T>)
     where
         T: Task;
 
+    /// Mark a task as being retried.
     async fn mark_as_retry<'s, T>(&self, task_id: &TaskId, option: MarkRetryOptions<'s, T>)
     where
         T: Task;
 
+    /// Get [TaskMeta] by task id.
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
 
     /// Recover task result from its [TaskMeta].
@@ -93,6 +108,7 @@ pub trait Backend: Send + Sync + Sized {
     where
         D: for<'de> Deserialize<'de>;
 
+    /// Store the task result to the [crate::backend::Backend].
     async fn store_result<D, T>(
         &self,
         task_id: &TaskId,
@@ -114,8 +130,12 @@ pub trait Backend: Send + Sync + Sized {
 
     fn ensure_not_eager(&self);
 
+    /// Clean up the [Backend].
+    ///
+    /// If there were expired [TaskMeta]s, clean them up.
     async fn cleanup(&self);
 
+    /// Clean up at the end of a task worker process.
     async fn process_cleanup(&self);
 
     // todo: chord related apis
@@ -139,10 +159,13 @@ pub trait BackendBuilder: Sized {
 
     fn new(backend_url: &str) -> Self;
 
+    /// Return a mutable instance of [BackendBasic].
     fn backend_basic(&mut self) -> &mut BackendBasic;
 
+    /// Parse valid backend url to [url::Url].
     fn parse_url(&self) -> Option<url::Url>;
 
+    /// Configure according to a [BackendConfig].
     fn config(mut self, config: BackendConfig) -> Self {
         let safe_url = match self.parse_url() {
             Some(url) => format!(
