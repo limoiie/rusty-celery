@@ -1,15 +1,16 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{
-    Backend, BackendBasic, BackendBuilder, TaskId, TaskMeta, TaskResult,
-};
+use crate::backend::inner::impl_layer::ImplLayer;
 use crate::backend::options::StoreOptions;
+use crate::backend::{BackendBasic, BackendBuilder, TaskId, TaskMeta, TaskResult};
 use crate::error::BackendError;
 use crate::prelude::Task;
 use crate::states::State;
 
-pub struct DisabledBackend {}
+pub struct DisabledBackend {
+    backend_basic: BackendBasic,
+}
 
 pub struct DisabledBackendBuilder {
     backend_basic: BackendBasic,
@@ -30,25 +31,36 @@ impl BackendBuilder for DisabledBackendBuilder {
     }
 
     async fn build(self) -> Result<Self::Backend, BackendError> {
-        Ok(Self::Backend {})
+        Ok(Self::Backend {
+            backend_basic: self.backend_basic,
+        })
     }
 }
 
 #[async_trait]
-impl Backend for DisabledBackend {
+impl ImplLayer for DisabledBackend {
     type Builder = DisabledBackendBuilder;
 
-    fn safe_url(&self) -> String {
+    fn basic_(&self) -> &BackendBasic {
+        &self.backend_basic
+    }
+
+    fn safe_url_(&self) -> String {
         "#[disabled!]#".to_owned()
     }
 
     #[allow(unused)]
-    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
+    async fn forget_(&self, task_id: &TaskId) {
         unreachable!("Backend is disabled!")
     }
 
     #[allow(unused)]
-    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    async fn get_task_meta_by_(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
+        unreachable!("Backend is disabled!")
+    }
+
+    #[allow(unused)]
+    fn recover_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
@@ -56,12 +68,7 @@ impl Backend for DisabledBackend {
     }
 
     #[allow(unused)]
-    async fn forget(&self, task_id: &TaskId) {
-        unreachable!("Backend is disabled!")
-    }
-
-    #[allow(unused)]
-    async fn store_result<D, T>(
+    async fn store_result_<D, T>(
         &self,
         task_id: &TaskId,
         result: TaskResult<D>,

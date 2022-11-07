@@ -2,11 +2,8 @@ use async_trait::async_trait;
 use bstr::ByteVec;
 
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
-use crate::backend::options::StoreOptions;
 use crate::backend::{BackendBuilder, TaskId, TaskMeta};
-use crate::kombu_serde::AnyValue;
 use crate::states::State;
-use crate::task::Task;
 
 pub type Key = String;
 
@@ -73,17 +70,7 @@ where
 {
     type Builder = B::Builder;
 
-    async fn _store_result<T>(
-        &self,
-        task_id: &TaskId,
-        data: AnyValue,
-        status: State,
-        option: &StoreOptions<T>,
-    ) where
-        T: Task,
-    {
-        let task_meta = Self::_make_task_meta(task_id.clone(), data, status, option).await;
-
+    async fn _store_task_meta(&self, task_id: &TaskId, task_meta: TaskMeta) {
         let remote_task_meta = self._fetch_task_meta_by(task_id).await;
         if !remote_task_meta.status.is_successful() {
             let data = self._encode(&task_meta);
@@ -92,7 +79,7 @@ where
             self._set_with_state(
                 self._get_key_for_task(task_id, None),
                 data.as_bytes(),
-                status,
+                task_meta.status,
             )
             .await;
         }

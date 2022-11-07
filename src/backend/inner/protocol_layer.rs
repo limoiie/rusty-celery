@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer};
+use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, ImplLayer};
 use crate::backend::options::StoreOptions;
-use crate::backend::{Backend, BackendBuilder, TaskId, TaskMeta, TaskResult};
+use crate::backend::{Backend, BackendBasic, BackendBuilder, TaskId, TaskMeta, TaskResult};
 use crate::kombu_serde::AnyValue;
 use crate::prelude::Task;
 use crate::states::State;
@@ -13,13 +13,7 @@ use crate::states::State;
 pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
     type Builder: BackendBuilder<Backend = Self>;
 
-    async fn _store_result<T: Task>(
-        &self,
-        task_id: &TaskId,
-        data: AnyValue,
-        status: State,
-        option: &StoreOptions<T>,
-    );
+    async fn _store_task_meta(&self, task_id: &TaskId, task_meta: TaskMeta);
 
     async fn _forget_task_meta_by(&self, task_id: &TaskId);
 
@@ -27,7 +21,7 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
 
     fn _decode_task_meta(&self, payload: String) -> TaskMeta;
 
-    async fn _get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
+    async fn _get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.ensure_not_eager();
         if cache {
             if let Some(meta) = self._get_cached(task_id).await {
@@ -78,36 +72,40 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
     }
 
     async fn _reload_task_meta(&mut self, task_id: &TaskId) -> Option<TaskMeta> {
-        let meta = self._get_task_meta(task_id, false).await;
+        let meta = self._get_task_meta_by(task_id, false).await;
         self._set_cached(task_id.clone(), meta).await
     }
 }
 
 #[async_trait]
-impl<B: BackendProtocolLayer> Backend for B {
+impl<B: BackendProtocolLayer> ImplLayer for B {
     type Builder = B::Builder;
 
-    fn safe_url(&self) -> String {
+    fn basic_(&self) -> &BackendBasic {
+        self._backend_basic()
+    }
+
+    fn safe_url_(&self) -> String {
         self._safe_url()
     }
 
-    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
-        self._get_task_meta(task_id, cache).await
+    async fn forget_(&self, task_id: &TaskId) {
+        self._del_cached(task_id).await;
+        self._forget_task_meta_by(task_id).await
     }
 
-    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    async fn get_task_meta_by_(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
+        self._get_task_meta_by(task_id, cache).await
+    }
+
+    fn recover_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
         self._recover_result(task_meta.result, task_meta.status)
     }
 
-    async fn forget(&self, task_id: &TaskId) {
-        self._del_cached(task_id).await;
-        self._forget_task_meta_by(task_id).await
-    }
-
-    async fn store_result<D, T>(
+    async fn store_result_<D, T>(
         &self,
         task_id: &TaskId,
         result: TaskResult<D>,
@@ -118,6 +116,7 @@ impl<B: BackendProtocolLayer> Backend for B {
         T: Task,
     {
         let data = self._prepare_result(result, status);
-        self._store_result(task_id, data, status, option).await;
+        let task_meta = Self::_make_task_meta(task_id.clone(), data, status, option).await;
+        self._store_task_meta(task_id, task_meta).await;
     }
 }

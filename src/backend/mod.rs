@@ -8,10 +8,10 @@ use tokio::sync::Mutex;
 
 use crate::backend::options::{
     MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkRevokeOptions, MarkStartOptions,
-    StoreOptions,
+    StoreOptions, WaitForOptions,
 };
 use crate::config::BackendConfig;
-use crate::error::{BackendError, TaskError, TraceError};
+use crate::error::{BackendError, TraceError};
 use crate::kombu_serde::SerializerKind;
 use crate::states::State;
 use crate::task::{Request, Task};
@@ -33,6 +33,7 @@ type TaskId = String;
 type Traceback = ();
 
 pub type TaskResult<D> = Result<D, Exc>;
+pub type BackendResult<D> = Result<D, BackendError>;
 pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
 
 pub struct BackendBasic {
@@ -76,131 +77,39 @@ pub trait BackendBuilder: Sized {
 pub trait Backend: Send + Sync + Sized {
     type Builder: BackendBuilder<Backend = Self>;
 
+    fn basic(&self) -> &BackendBasic;
+
     fn safe_url(&self) -> String;
 
-    async fn get_task_meta(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
-
-    fn recover_result_by_meta<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
-    where
-        D: for<'de> Deserialize<'de>;
-
-    async fn wait_for(
-        &self,
-        task_id: &TaskId,
-        timeout: Option<std::time::Duration>,
-        interval: Option<std::time::Duration>,
-    ) -> Result<TaskMeta, BackendError> {
-        let interval = interval.unwrap_or(std::time::Duration::from_millis(500));
-
-        let timeout =
-            timeout.map(|timeout| core::time::Duration::new(0, timeout.as_nanos() as u32));
-        let interval = core::time::Duration::new(0, interval.as_nanos() as u32);
-
-        self.ensure_not_eager();
-
-        let start_timing = std::time::SystemTime::now();
-        loop {
-            let task_meta = self.get_task_meta(task_id, true).await;
-            if task_meta.is_ready() {
-                return Ok(task_meta);
-            }
-
-            tokio::time::sleep(interval).await;
-            if let Some(timeout) = timeout {
-                if std::time::SystemTime::now() > start_timing + timeout {
-                    return Err(BackendError::TimeoutError);
-                }
-            }
-        }
-    }
-
-    async fn mark_as_started<'s, T>(&'s self, task_id: &TaskId, option: MarkStartOptions<'s, T>)
-    where
-        T: Task,
-    {
-        let data = Ok(option.meta);
-        self.store_result(task_id, data, option.status, &option.store)
-            .await
-    }
-
-    async fn mark_as_done<'s, 'r, T>(&'s self, task_id: &TaskId, option: MarkDoneOptions<'s, 'r, T>)
-    where
-        T: Task,
-    {
-        let data = Ok(option.result);
-
-        if option.store_result
-            && !option
-                .store
-                .request
-                .map(|r| r.ignore_result)
-                .unwrap_or(false)
-        {
-            self.store_result(task_id, data.clone(), option.status, &option.store)
-                .await;
-        }
-
-        if let Some(request) = option.store.request {
-            if request.chord.is_some() {
-                self.on_chord_part_return(request, option.status, data)
-                    .await
-            }
-        }
-    }
-
-    async fn mark_as_failure<'s, T>(&'s self, task_id: &TaskId, option: MarkFailureOptions<'s, T>)
-    where
-        T: Task,
-    {
-        let err = TaskResult::<()>::Err(option.exc);
-
-        if option.store_result {
-            self.store_result(task_id, err.clone(), option.status, &option.store)
-                .await;
-        }
-
-        if let Some(request) = option.store.request {
-            if request.chord.is_some() {
-                self.on_chord_part_return(request, option.status, err).await
-            }
-
-            // todo: chain elem ctx -> store_result
-            if option.call_errbacks {
-                // todo: call err callbacks
-            }
-        }
-    }
-
-    async fn mark_as_revoked<'s, T>(&'s self, task_id: &TaskId, option: MarkRevokeOptions<'s, T>)
-    where
-        T: Task,
-    {
-        let exc = TraceError::TaskError(TaskError::RevokedError(option.reason));
-        let err = TaskResult::<()>::Err(exc);
-
-        if option.store_result {
-            self.store_result(task_id, err.clone(), option.status, &option.store)
-                .await;
-        }
-
-        if let Some(request) = option.store.request {
-            if request.chord.is_some() {
-                self.on_chord_part_return(request, option.status, err).await
-            }
-        }
-    }
-
-    async fn mark_as_retry<'s, T>(&'s self, task_id: &TaskId, option: MarkRetryOptions<'s, T>)
-    where
-        T: Task,
-    {
-        let err = TaskResult::<()>::Err(option.exc);
-
-        self.store_result(task_id, err, option.status, &option.store)
-            .await;
-    }
+    async fn wait_for(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta>;
 
     async fn forget(&self, task_id: &TaskId);
+
+    async fn mark_as_started<'s, T>(&self, task_id: &TaskId, option: MarkStartOptions<'s, T>)
+    where
+        T: Task;
+
+    async fn mark_as_done<'s, 'r, T>(&self, task_id: &TaskId, option: MarkDoneOptions<'s, 'r, T>)
+    where
+        T: Task;
+
+    async fn mark_as_failure<'s, T>(&self, task_id: &TaskId, option: MarkFailureOptions<'s, T>)
+    where
+        T: Task;
+
+    async fn mark_as_revoked<'s, T>(&self, task_id: &TaskId, option: MarkRevokeOptions<'s, T>)
+    where
+        T: Task;
+
+    async fn mark_as_retry<'s, T>(&self, task_id: &TaskId, option: MarkRetryOptions<'s, T>)
+    where
+        T: Task;
+
+    async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
+
+    fn recover_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    where
+        D: for<'de> Deserialize<'de>;
 
     async fn store_result<D, T>(
         &self,
@@ -212,42 +121,32 @@ pub trait Backend: Send + Sync + Sized {
         D: Serialize + Send + Sync,
         T: Task;
 
-    #[allow(unused)]
     async fn on_chord_part_return<T, D>(
         &self,
-        request: &Request<T>,
-        state: State,
         result: TaskResult<D>,
+        status: State,
+        request: &Request<T>,
     ) where
-        T: Task,
         D: Serialize + Send + Sync,
-    {
-        // no-op
-    }
+        T: Task;
 
-    fn ensure_not_eager(&self) {
-        // no-op
-    }
+    fn ensure_not_eager(&self);
 
-    async fn cleanup(&self) {
-        // no-op
-    }
+    async fn cleanup(&self);
 
-    async fn process_cleanup(&self) {
-        // no-op
-    }
+    async fn process_cleanup(&self);
 
     // todo: chord related apis
-    //   fn add_to_chord(&self, chord_id, result)
-    //   fn on_chord_part_return(&self, request, state, result, kwargs)
-    //   fn set_chord_size(&self, group_id, chord_size)
-    //   fn fallback_chord_unlock(&self, header_result, body, countdown, kwargs)
-    //   fn ensure_chords_allowed(&self)
-    //   fn apply_chord(&self, header_result_args, body, kwargs)
+    // fn add_to_chord(&self, chord_id, result)
+    // fn on_chord_part_return(&self, request, state, result, kwargs)
+    // fn set_chord_size(&self, group_id, chord_size)
+    // fn fallback_chord_unlock(&self, header_result, body, countdown, kwargs)
+    // fn ensure_chords_allowed(&self)
+    // fn apply_chord(&self, header_result_args, body, kwargs)
 
     // todo: group related apis
-    //   fn get_group_meta(&self, group_id, cache=True)
-    //   fn restore_group(&self, group_id, cache=True)
-    //   fn save_group(&self, group_id, result)
-    //   fn delete_group(&self, group_id)
+    // fn get_group_meta(&self, group_id, cache=True)
+    // fn restore_group(&self, group_id, cache=True)
+    // fn save_group(&self, group_id, result)
+    // fn delete_group(&self, group_id)
 }

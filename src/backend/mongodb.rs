@@ -5,11 +5,9 @@ use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
-use crate::backend::options::StoreOptions;
 use crate::backend::{BackendBasic, BackendBuilder, TaskId, TaskMeta, Traceback};
 use crate::error::BackendError;
-use crate::kombu_serde::{AnyValue, SerializerKind};
-use crate::prelude::Task;
+use crate::kombu_serde::SerializerKind;
 use crate::states::State;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -139,7 +137,7 @@ impl MongoDbBackend {
 
 #[async_trait]
 impl BackendBasicLayer for MongoDbBackend {
-    fn backend_basic(&self) -> &BackendBasic {
+    fn _backend_basic(&self) -> &BackendBasic {
         &self.backend_basic
     }
 
@@ -166,19 +164,8 @@ impl BackendSerdeLayer for MongoDbBackend {
 impl BackendProtocolLayer for MongoDbBackend {
     type Builder = MongoDbBackendBuilder;
 
-    async fn _store_result<T>(
-        &self,
-        task_id: &TaskId,
-        data: AnyValue,
-        status: State,
-        option: &StoreOptions<T>,
-    ) where
-        T: Task,
-    {
-        let task_meta = MongoTaskMeta::from_task_meta(
-            Self::_make_task_meta(task_id.clone(), data, status, option).await,
-            self._serializer(),
-        );
+    async fn _store_task_meta(&self, task_id: &TaskId, task_meta: TaskMeta) {
+        let task_meta = MongoTaskMeta::from_task_meta(task_meta, self._serializer());
 
         let opt = FindOneAndReplaceOptions::builder().upsert(true).build();
 

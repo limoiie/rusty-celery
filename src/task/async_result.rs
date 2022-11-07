@@ -1,11 +1,14 @@
-use crate::backend::{Backend, GetTaskResult, TaskMeta};
-use crate::states::State;
-use async_recursion::async_recursion;
-use serde::Deserialize;
 use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Duration;
+
+use async_recursion::async_recursion;
+use serde::Deserialize;
 use tokio::sync::Mutex;
+
+use crate::backend::options::WaitForOptions;
+use crate::backend::{Backend, GetTaskResult, TaskMeta};
+use crate::states::State;
 
 /// An [`AsyncResult`] is a handle for the result of a task.
 #[derive(Debug, Clone)]
@@ -71,15 +74,17 @@ where
         let meta = self
             .backend
             .as_ref()
-            .wait_for(&self.task_id, option.timeout, option.interval)
+            .wait_for(
+                &self.task_id,
+                WaitForOptions::builder()
+                    .timeout(option.timeout)
+                    .interval(option.interval)
+                    .build(),
+            )
             .await?;
 
         let meta = self.set_cache_if_ready(meta).await;
-        Ok(self
-            .backend
-            .as_ref()
-            .recover_result_by_meta::<D>(meta)
-            .unwrap())
+        Ok(self.backend.as_ref().recover_result::<D>(meta).unwrap())
     }
 
     pub async fn status(&self) -> State {
@@ -91,7 +96,7 @@ where
             let task_meta = self
                 .backend
                 .as_ref()
-                .get_task_meta(&self.task_id, true)
+                .get_task_meta_by(&self.task_id, true)
                 .await;
             self.set_cache_if_ready(task_meta).await
         } else {

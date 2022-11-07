@@ -8,7 +8,7 @@ use crate::backend::{BackendBasic, TaskId, TaskMeta};
 
 #[async_trait]
 pub trait BackendBasicLayer: Send + Sync + Sized {
-    fn backend_basic(&self) -> &BackendBasic;
+    fn _backend_basic(&self) -> &BackendBasic;
 
     fn _safe_url(&self) -> String {
         match self._parse_url() {
@@ -30,11 +30,11 @@ pub trait BackendBasicLayer: Send + Sync + Sized {
     fn _parse_url(&self) -> Option<url::Url>;
 
     fn _expires_in_seconds(&self) -> Option<u32> {
-        self.backend_basic().expiration_in_seconds
+        self._backend_basic().expiration_in_seconds
     }
 
     async fn _cached(&self) -> MutexGuard<RefCell<HashMap<String, TaskMeta>>> {
-        self.backend_basic().cache.lock().await
+        self._backend_basic().cache.lock().await
     }
 
     async fn _get_cached(&self, task_id: &TaskId) -> Option<TaskMeta> {

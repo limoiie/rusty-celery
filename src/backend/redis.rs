@@ -52,7 +52,7 @@ impl BackendSerdeLayer for RedisBackend {
 
 #[async_trait]
 impl BackendBasicLayer for RedisBackend {
-    fn backend_basic(&self) -> &BackendBasic {
+    fn _backend_basic(&self) -> &BackendBasic {
         &self.backend_basic
     }
 
