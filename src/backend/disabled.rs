@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{
-    Backend, BackendBasic, BackendBuilder, StoreOptions, TaskId, TaskMeta, TaskResult,
+    Backend, BackendBasic, BackendBuilder, TaskId, TaskMeta, TaskResult,
 };
+use crate::backend::options::StoreOptions;
 use crate::error::BackendError;
 use crate::prelude::Task;
 use crate::states::State;

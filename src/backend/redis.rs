@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use redis::aio::ConnectionManager;
 use redis::Client;
 
-use crate::backend::inner::basic_layer::BackendBasic;
-use crate::backend::inner::key_value_store_layer::{Key, KeyValueStoreLayer};
-use crate::backend::{BackendBasicLayer, BackendBuilder, BackendSerdeLayer};
+use crate::backend::inner::key_value_store_layer::Key;
+use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, KeyValueStoreLayer};
+use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
 

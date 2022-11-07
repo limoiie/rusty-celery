@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use bstr::ByteVec;
 
-use crate::backend::{
-    BackendBasicLayer, BackendBuilder, BackendProtocolLayer, BackendSerdeLayer, StoreOptions,
-    TaskId, TaskMeta,
-};
+use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
+use crate::backend::options::StoreOptions;
+use crate::backend::{BackendBuilder, TaskId, TaskMeta};
 use crate::kombu_serde::AnyValue;
 use crate::states::State;
 use crate::task::Task;

@@ -1,28 +1,32 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::config::BackendConfig;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use typed_builder::TypedBuilder;
+use tokio::sync::Mutex;
 
+use crate::backend::options::{
+    MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkRevokeOptions, MarkStartOptions,
+    StoreOptions,
+};
+use crate::config::BackendConfig;
 use crate::error::{BackendError, TaskError, TraceError};
+use crate::kombu_serde::SerializerKind;
 use crate::states::State;
 use crate::task::{Request, Task};
 
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
-pub use self::inner::basic_layer::BackendBasic;
-pub use self::inner::basic_layer::BackendBasicLayer;
-pub use self::inner::key_value_store_layer::KeyValueStoreLayer;
-pub use self::inner::protocol_layer::BackendProtocolLayer;
-pub use self::inner::serde_layer::BackendSerdeLayer;
-pub use self::inner::task_meta::TaskMeta;
 pub use self::mongodb::{MongoDbBackend, MongoDbBackendBuilder};
 pub use self::redis::{RedisBackend, RedisBackendBuilder};
+pub use self::task_meta::TaskMeta;
 
 mod disabled;
 mod inner;
 mod mongodb;
+pub mod options;
 mod redis;
+mod task_meta;
 
 type Exc = TraceError;
 type TaskId = String;
@@ -30,6 +34,24 @@ type Traceback = ();
 
 pub type TaskResult<D> = Result<D, Exc>;
 pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
+
+pub struct BackendBasic {
+    pub url: String,
+    pub result_serializer: SerializerKind,
+    pub expiration_in_seconds: Option<u32>,
+    pub cache: Arc<Mutex<RefCell<HashMap<String, TaskMeta>>>>,
+}
+
+impl BackendBasic {
+    pub fn new(backend_url: &str) -> BackendBasic {
+        Self {
+            url: backend_url.to_owned(),
+            result_serializer: SerializerKind::JSON,
+            expiration_in_seconds: None,
+            cache: Arc::new(Mutex::new(RefCell::new(HashMap::new()))),
+        }
+    }
+}
 
 #[async_trait]
 pub trait BackendBuilder: Sized {
@@ -48,69 +70,6 @@ pub trait BackendBuilder: Sized {
     }
 
     async fn build(self) -> Result<Self::Backend, BackendError>;
-}
-
-#[derive(Clone, Default)]
-pub struct StoreOptions<'request, T: Task> {
-    traceback: Option<Traceback>,
-    request: Option<&'request Request<T>>,
-}
-
-impl<'require, T: Task> StoreOptions<'require, T> {
-    pub fn with_request(request: &'require Request<T>) -> Self {
-        Self {
-            traceback: None,
-            request: Some(request),
-        }
-    }
-}
-
-#[derive(TypedBuilder)]
-pub struct MarkStartOptions<'request, T: Task> {
-    #[builder(default = State::STARTED)]
-    status: State,
-    meta: HashMap<String, String>,
-    store: StoreOptions<'request, T>,
-}
-
-#[derive(TypedBuilder)]
-pub struct MarkDoneOptions<'returns, 'request, T: Task> {
-    #[builder(default = State::SUCCESS)]
-    status: State,
-    result: &'returns T::Returns,
-    #[builder(default = true)]
-    store_result: bool,
-    store: StoreOptions<'request, T>,
-}
-
-#[derive(TypedBuilder)]
-pub struct MarkFailureOptions<'request, T: Task> {
-    #[builder(default = State::FAILURE)]
-    status: State,
-    exc: Exc,
-    #[builder(default = false)]
-    call_errbacks: bool,
-    #[builder(default = true)]
-    store_result: bool,
-    store: StoreOptions<'request, T>,
-}
-
-#[derive(TypedBuilder)]
-pub struct MarkRevokeOptions<'request, T: Task> {
-    #[builder(default = State::REVOKED)]
-    status: State,
-    reason: String,
-    #[builder(default = true)]
-    store_result: bool,
-    store: StoreOptions<'request, T>,
-}
-
-#[derive(TypedBuilder)]
-pub struct MarkRetryOptions<'request, T: Task> {
-    #[builder(default = State::RETRY)]
-    status: State,
-    exc: Exc,
-    store: StoreOptions<'request, T>,
 }
 
 #[async_trait]
@@ -291,38 +250,4 @@ pub trait Backend: Send + Sync + Sized {
     //   fn restore_group(&self, group_id, cache=True)
     //   fn save_group(&self, group_id, result)
     //   fn delete_group(&self, group_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::kombu_serde::{AnyValue, SerializerKind};
-    use chrono::{DateTime, Utc};
-
-    #[test]
-    fn test_serde_result_meta() {
-        let serializer = SerializerKind::JSON;
-
-        let result_meta = TaskMeta {
-            task_id: "fake-id".to_owned(),
-            status: State::SUCCESS,
-            result: AnyValue::JSON(serde_json::to_value(11).unwrap()),
-            traceback: None,
-            children: vec![],
-            date_done: Some(DateTime::<Utc>::from(std::time::SystemTime::now()).to_rfc3339()),
-            group_id: None,
-            parent_id: None,
-            name: None,
-            args: None,
-            kwargs: None,
-            worker: Some("fake-hostname".to_owned()),
-            retries: Some(10),
-            queue: None,
-        };
-
-        let (_content_type, _encoding, data) = serializer.dump(&result_meta);
-        let output_result_meta = serializer.load(&data);
-
-        assert_eq!(result_meta, output_result_meta);
-    }
 }

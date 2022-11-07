@@ -1,28 +1,10 @@
-use crate::backend::{TaskId, TaskMeta};
-use crate::kombu_serde::SerializerKind;
-use async_trait::async_trait;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
 
-pub struct BackendBasic {
-    pub url: String,
-    pub result_serializer: SerializerKind,
-    pub expiration_in_seconds: Option<u32>,
-    pub cache: Arc<Mutex<RefCell<HashMap<String, TaskMeta>>>>,
-}
+use async_trait::async_trait;
+use tokio::sync::MutexGuard;
 
-impl BackendBasic {
-    pub fn new(backend_url: &str) -> BackendBasic {
-        Self {
-            url: backend_url.to_owned(),
-            result_serializer: SerializerKind::JSON,
-            expiration_in_seconds: None,
-            cache: Arc::new(Mutex::new(RefCell::new(HashMap::new()))),
-        }
-    }
-}
+use crate::backend::{BackendBasic, TaskId, TaskMeta};
 
 #[async_trait]
 pub trait BackendBasicLayer: Send + Sync + Sized {

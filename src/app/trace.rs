@@ -7,9 +7,10 @@ use log::{debug, error, info, warn};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::{self, Duration, Instant};
 
-use crate::backend::{
-    Backend, MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkStartOptions, StoreOptions,
+use crate::backend::options::{
+    MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkStartOptions, StoreOptions,
 };
+use crate::backend::Backend;
 use crate::error::{ProtocolError, TaskError, TraceError};
 use crate::protocol::Message;
 use crate::task::{Request, Task, TaskEvent, TaskOptions, TaskStatus};
