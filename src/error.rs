@@ -207,7 +207,7 @@ pub enum BackendError {
     TimeoutError,
 
     #[error("deserialize error \"{0}\"")]
-    DeserializeError(String),
+    DeserializeError(#[from] ContentTypeError),
 
     /// Any other Redis error that could happen.
     #[error("Redis error \"{0}\"")]

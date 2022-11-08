@@ -1,12 +1,12 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::backend::inner::impl_layer::ImplLayer;
 use crate::backend::options::StoreOptions;
-use crate::backend::{BackendBasic, BackendBuilder, TaskResult};
+use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
 use crate::prelude::Task;
-use crate::protocol::{State, TaskId, TaskMeta};
+use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
 
 pub struct DisabledBackend {
     backend_basic: BackendBasic,
@@ -56,14 +56,6 @@ impl ImplLayer for DisabledBackend {
 
     #[allow(unused)]
     async fn get_task_meta_by_(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
-        unreachable!("Backend is disabled!")
-    }
-
-    #[allow(unused)]
-    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<ExecResult<D>>
-    where
-        D: for<'de> Deserialize<'de>,
-    {
         unreachable!("Backend is disabled!")
     }
 

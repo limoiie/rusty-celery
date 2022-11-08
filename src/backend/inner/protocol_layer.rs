@@ -1,13 +1,14 @@
+use std::convert::TryInto;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, ImplLayer};
 use crate::backend::options::StoreOptions;
-use crate::backend::{Backend, BackendBasic, BackendBuilder, TaskResult};
-use crate::kombu_serde::AnyValue;
+use crate::backend::{Backend, BackendBasic, BackendBuilder};
 use crate::prelude::Task;
-use crate::protocol::{State, TaskId, TaskMeta};
+use crate::protocol::{ExecResult, State, TaskId, TaskMeta, TaskMetaInfo};
 
 #[async_trait]
 pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
@@ -30,21 +31,23 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
         }
 
         let meta = self._fetch_task_meta_by(task_id).await;
-        if cache && meta.status == State::SUCCESS {
+        if cache && meta.info.status == State::SUCCESS {
             self._set_cached(task_id.clone(), meta.clone()).await;
         }
 
         return meta;
     }
 
-    async fn _make_task_meta<T>(
+    async fn _make_task_meta<T, D>(
+        &self,
         task_id: TaskId,
-        result: AnyValue,
+        result: ExecResult<D>,
         status: State,
         option: &StoreOptions<T>,
-    ) -> TaskMeta
+    ) -> TaskMeta<ExecResult<D>>
     where
         T: Task,
+        D: Serialize + Send + Sync,
     {
         let date_done = if status.is_ready() {
             Some(DateTime::<Utc>::from(std::time::SystemTime::now()).to_rfc3339())
@@ -53,21 +56,24 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
         };
 
         TaskMeta {
-            task_id,
-            status,
-            result,
-            traceback: option.traceback,
-            children: vec![/* todo */],
-            date_done,
-            group_id: option.request.and_then(|r| r.group.clone()),
-            parent_id: None,
-            // todo: assign request properties to following fields
-            name: None,
-            args: None,
-            kwargs: None,
-            worker: option.request.and_then(|r| r.hostname.clone()),
-            retries: option.request.map(|r| r.retries),
-            queue: option.request.and_then(|r| r.reply_to.clone()),
+            info: TaskMetaInfo {
+                task_id,
+                status,
+                traceback: option.traceback,
+                children: vec![/* todo */],
+                date_done,
+                group_id: option.request.and_then(|r| r.group.clone()),
+                parent_id: None,
+                // todo: assign request properties to following fields
+                name: None,
+                args: None,
+                kwargs: None,
+                worker: option.request.and_then(|r| r.hostname.clone()),
+                retries: option.request.map(|r| r.retries),
+                queue: option.request.and_then(|r| r.reply_to.clone()),
+                content_type: self._serializer(),
+            },
+            result: Some(result),
         }
     }
 
@@ -94,25 +100,22 @@ impl<B: BackendProtocolLayer> ImplLayer for B {
         self._get_task_meta_by(task_id, cache).await
     }
 
-    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
-    where
-        D: for<'de> Deserialize<'de>,
-    {
-        self._restore_result(task_meta.result, task_meta.status)
-    }
-
     async fn store_result_<D, T>(
         &self,
         task_id: &TaskId,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         status: State,
         option: &StoreOptions<T>,
     ) where
         D: Serialize + Send + Sync,
         T: Task,
     {
-        let data = self._prepare_result(result, status);
-        let task_meta = Self::_make_task_meta(task_id.clone(), data, status, option).await;
+        let task_meta = self
+            ._make_task_meta(task_id.clone(), result, status, option)
+            .await
+            .try_into()
+            .unwrap();
+
         self._store_task_meta(task_id, task_meta).await;
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use typed_builder::TypedBuilder;
 
-use crate::backend::Exc;
+use crate::protocol::Exc;
 use crate::prelude::Task;
 use crate::protocol::{State, Traceback};
 use crate::task::Request;
@@ -23,7 +23,7 @@ impl<'require, T: Task> StoreOptions<'require, T> {
 }
 
 #[derive(TypedBuilder)]
-pub struct WaitForOptions {
+pub struct WaitOptions {
     pub(crate) timeout: Option<chrono::Duration>,
     pub(crate) interval: Option<chrono::Duration>,
 }

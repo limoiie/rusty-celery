@@ -1,13 +1,12 @@
-use bstr::ByteVec;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+use crate::error::ContentTypeError;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnyValue {
     JSON(serde_json::Value),
     #[cfg(feature = "serde_yaml")]
     YAML(serde_yaml::Value),
-    #[default]
-    NULL,
 }
 
 impl From<serde_json::Value> for AnyValue {
@@ -32,7 +31,6 @@ impl Serialize for AnyValue {
             AnyValue::JSON(value) => value.serialize(serializer),
             #[cfg(feature = "serde_yaml")]
             AnyValue::YAML(value) => value.serialize(serializer),
-            AnyValue::NULL => panic!("Invalid serializer NULL"),
         }
     }
 }
@@ -55,23 +53,40 @@ impl<'de> Deserialize<'de> for AnyValue {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+impl AnyValue {
+    pub fn into<D>(self) -> Result<D, ContentTypeError>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        match self {
+            AnyValue::JSON(value) => serde_json::from_value(value).map_err(ContentTypeError::from),
+            #[cfg(feature = "serde_yaml")]
+            AnyValue::YAML(value) => serde_yaml::from_value(value).map_err(ContentTypeError::from),
+        }
+    }
+
+    pub fn kind(&self) -> SerializerKind {
+        match self {
+            AnyValue::JSON(_) => SerializerKind::JSON,
+            #[cfg(feature = "serde_yaml")]
+            AnyValue::YAML(_) => SerializerKind::YAML,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum SerializerKind {
+    #[default]
     JSON,
     #[cfg(feature = "serde_yaml")]
     YAML,
 }
 
 impl SerializerKind {
-    pub fn dump_bytes(&self, data: Vec<u8>) -> (&'static str, &'static str, String) {
-        ("application/data", "binary", data.into_string_lossy()) // fixme: encoding in a correct way
-    }
-
-    pub fn dump_string(&self, data: String) -> (&'static str, &'static str, String) {
-        ("text/plain", "utf-8", data)
-    }
-
-    pub fn dump<D: Serialize>(&self, data: &D) -> (&'static str, &'static str, String) {
+    pub fn dump<D>(&self, data: &D) -> (&'static str, &'static str, String)
+    where
+        D: Serialize,
+    {
         match self {
             SerializerKind::JSON => (
                 "application/json",
@@ -87,7 +102,10 @@ impl SerializerKind {
         }
     }
 
-    pub fn load<D: for<'de> Deserialize<'de>>(&self, data: &String) -> D {
+    pub fn load<D>(&self, data: &String) -> D
+    where
+        D: for<'de> Deserialize<'de>,
+    {
         log::debug!(
             "Try decoding as {} with `{}'",
             std::any::type_name::<D>(),
@@ -101,30 +119,25 @@ impl SerializerKind {
         }
     }
 
-    pub fn data_to_value<T: Serialize>(&self, data: &T) -> AnyValue {
-        match self {
-            SerializerKind::JSON => serde_json::to_value(data).unwrap().into(),
-            #[cfg(feature = "serde_yaml")]
-            SerializerKind::YAML => serde_yaml::to_value(data).unwrap().into(),
-        }
+    pub fn to_value<D>(&self, data: &D) -> AnyValue
+    where
+        D: Serialize,
+    {
+        self.try_to_value(data).unwrap()
     }
 
-    pub fn value_to_data<T: for<'de> Deserialize<'de>>(
-        &self,
-        value: AnyValue,
-    ) -> Result<T, String> {
-        match (self, value) {
-            (SerializerKind::JSON, AnyValue::JSON(value)) => {
-                serde_json::from_value(value).map_err(|e| format!("{}", e))
-            }
+    pub fn try_to_value<D>(&self, data: &D) -> Result<AnyValue, ContentTypeError>
+    where
+        D: Serialize,
+    {
+        match self {
+            SerializerKind::JSON => serde_json::to_value(data)
+                .map(Into::into)
+                .map_err(ContentTypeError::from),
             #[cfg(feature = "serde_yaml")]
-            (SerializerKind::YAML, AnyValue::YAML(value)) => {
-                serde_yaml::from_value(value).map_err(|e| format!("{}", e))
-            }
-            (_, value) => Err(format!(
-                "SerializerKind {:?} does not suit for {:?}",
-                self, value
-            )),
+            SerializerKind::YAML => serde_yaml::to_value(data)
+                .map(Into::into)
+                .map_err(ContentTypeError::from),
         }
     }
 }
@@ -140,7 +153,7 @@ mod tests {
         let data = HashMap::from([("name", 0x7)]);
 
         let kind = SerializerKind::JSON;
-        let value = kind.data_to_value(&data);
+        let value = kind.to_value(&data);
 
         let (_, _, serialized) = kind.dump(&value);
         let output_value = kind.load(&serialized);

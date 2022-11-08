@@ -73,14 +73,14 @@ where
 
     async fn _store_task_meta(&self, task_id: &TaskId, task_meta: TaskMeta) {
         let remote_task_meta = self._fetch_task_meta_by(task_id).await;
-        if !remote_task_meta.status.is_successful() {
+        if !remote_task_meta.is_successful() {
             let data = self._encode(&task_meta);
             log::debug!("Store task meta: {}", data);
 
             self._set_with_state(
                 self._get_key_for_task(task_id, None),
                 data.as_bytes(),
-                task_meta.status,
+                task_meta.info.status,
             )
             .await;
         }
@@ -99,11 +99,7 @@ where
             }
         }
 
-        TaskMeta {
-            status: State::PENDING,
-            result: self._serializer().data_to_value(&None::<()>),
-            ..TaskMeta::default()
-        }
+        TaskMeta::default()
     }
 
     fn _decode_task_meta(&self, payload: String) -> TaskMeta {

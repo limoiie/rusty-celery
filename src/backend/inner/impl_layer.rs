@@ -1,13 +1,13 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::backend::options::{
     MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkRevokeOptions, MarkStartOptions,
-    StoreOptions, WaitForOptions,
+    StoreOptions, WaitOptions,
 };
 use crate::backend::{Backend, BackendBasic, BackendBuilder, BackendResult};
 use crate::error::{BackendError, TaskError, TraceError};
-use crate::protocol::{State, TaskId, TaskMeta};
+use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
 use crate::task::{Request, Task};
 
 #[async_trait]
@@ -16,7 +16,7 @@ pub trait ImplLayer: Send + Sync + Sized {
 
     fn basic_(&self) -> &BackendBasic;
 
-    async fn wait_for_(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta> {
+    async fn wait_(&self, task_id: &TaskId, option: WaitOptions) -> BackendResult<TaskMeta> {
         let interval = option
             .interval
             .or_else(|| Some(chrono::Duration::milliseconds(500)))
@@ -138,10 +138,6 @@ pub trait ImplLayer: Send + Sync + Sized {
 
     async fn get_task_meta_by_(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
 
-    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
-    where
-        D: for<'de> Deserialize<'de>;
-
     async fn store_result_<D, T>(
         &self,
         task_id: &TaskId,
@@ -200,8 +196,8 @@ impl<L: ImplLayer> Backend for L {
         self.basic_()
     }
 
-    async fn wait_for(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta> {
-        self.wait_for_(task_id, option).await
+    async fn wait(&self, task_id: &TaskId, option: WaitOptions) -> BackendResult<TaskMeta> {
+        self.wait_(task_id, option).await
     }
 
     async fn forget(&self, task_id: &TaskId) {
@@ -245,13 +241,6 @@ impl<L: ImplLayer> Backend for L {
 
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.get_task_meta_by_(task_id, cache).await
-    }
-
-    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<ExecResult<D>>
-    where
-        D: for<'de> Deserialize<'de>,
-    {
-        self.restore_result_(task_meta)
     }
 
     async fn store_result<D, T>(

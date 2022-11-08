@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{from_slice, from_value, json, Value};
 use uuid::Uuid;
 
-use crate::error::{ContentTypeError, ProtocolError};
-use crate::kombu_serde::AnyValue;
+use crate::error::{ContentTypeError, ProtocolError, TaskError, TraceError};
+use crate::kombu_serde::{AnyValue, SerializerKind};
 use crate::task::{Signature, Task};
 
 static ORIGIN: Lazy<Option<String>> = Lazy::new(|| {
@@ -770,23 +770,24 @@ impl State {
 
 pub type TaskId = String;
 pub type Traceback = ();
+pub type Exc = TraceError;
+pub type ExecResult<D> = Result<D, Exc>;
 
-/// Task meta information.
-///
-/// [crate::protocol::TaskMeta] traces the execution information about a task. It will be maintained
-/// by [crate::backend::Backend].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GeneralError {
+    exc_type: String,
+    exc_message: String,
+    exc_module: String,
+}
+
+/// The general part of a task meta.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct TaskMeta {
+pub struct TaskMetaInfo {
     /// Task id which is an ObjectId.
     pub task_id: TaskId,
 
     /// Task execution status.
     pub status: State,
-
-    /// Serialized result.
-    ///
-    /// Either be the returned value, or be an exception.
-    pub result: AnyValue,
 
     /// Traceback when there was an exception.
     pub traceback: Option<Traceback>,
@@ -835,21 +836,173 @@ pub struct TaskMeta {
     /// The queue to which this task belong.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub queue: Option<String>,
+
+    /// The content type of the result.
+    #[serde(skip)]
+    pub content_type: SerializerKind,
 }
 
-impl TaskMeta {
+/// Task meta information.
+///
+/// [crate::protocol::TaskMeta] traces the execution information about a task. It will be maintained
+/// by [crate::backend::Backend].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TaskMeta<R = AnyValue> {
+    /// The general part information.
+    #[serde(flatten)]
+    pub info: TaskMetaInfo,
+
+    /// Serialized result.
+    ///
+    /// Either be the returned value, or be an exception.
+    pub result: Option<R>,
+}
+
+impl<R> TaskMeta<R> {
     /// Check if the task is ready/finished.
     pub fn is_ready(&self) -> bool {
-        self.status.is_ready()
+        self.info.status.is_ready()
     }
 
     /// Check if the task is exceptional.
     pub fn is_exception(&self) -> bool {
-        self.status.is_exception()
+        self.info.status.is_exception()
     }
 
     /// Check if the task is successful.
     pub fn is_successful(&self) -> bool {
-        self.status.is_successful()
+        self.info.status.is_successful()
+    }
+}
+
+impl TaskMeta<AnyValue> {
+    pub fn default<D>() -> TaskMeta<D>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        TaskMeta {
+            info: Default::default(),
+            result: None,
+        }
+    }
+}
+
+impl<T> TryFrom<TaskMeta<AnyValue>> for TaskMeta<ExecResult<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    type Error = ContentTypeError;
+
+    fn try_from(meta: TaskMeta<AnyValue>) -> Result<TaskMeta<ExecResult<T>>, Self::Error> {
+        let info = meta.info;
+        let result = meta
+            .result
+            .map(AnyValue::into)
+            .transpose()?
+            .map(|result| inner::restore(result, info.status))
+            .transpose()?;
+
+        Ok(TaskMeta { info, result })
+    }
+}
+
+impl<T> TryFrom<TaskMeta<ExecResult<T>>> for TaskMeta<AnyValue>
+where
+    T: Serialize,
+{
+    type Error = ContentTypeError;
+
+    fn try_from(meta: TaskMeta<ExecResult<T>>) -> Result<Self, Self::Error> {
+        let info = meta.info;
+        let result = meta
+            .result
+            .map(|result| inner::prepare(&result, &info))
+            .transpose()?;
+
+        Ok(TaskMeta { info, result })
+    }
+}
+
+mod inner {
+    use super::*;
+
+    type Error = ContentTypeError;
+
+    pub(super) fn restore<D>(data: AnyValue, state: State) -> Result<ExecResult<D>, Error>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        match state {
+            _ if state.is_exception() => Ok(_restore_exception(data)),
+            _ if state.is_successful() => Ok(_restore_value(data)),
+            _ => Err(Error::Unknown),
+        }
+    }
+
+    pub(super) fn prepare<D>(result: &ExecResult<D>, info: &TaskMetaInfo) -> Result<AnyValue, Error>
+    where
+        D: Serialize,
+    {
+        match result {
+            Ok(data) => _prepare_value(data, info.content_type),
+            Err(err) if info.status.is_exception() => _prepare_exception(err, info.content_type),
+            Err(_) => Err(ContentTypeError::Unknown),
+        }
+    }
+
+    fn _restore_value<D>(data: AnyValue) -> ExecResult<D>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        // todo: unwrap or ?
+        Ok(data.into().unwrap())
+    }
+
+    fn _restore_exception<D>(data: AnyValue) -> ExecResult<D>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        // todo: unwrap or ?
+        let err: GeneralError = data.into().unwrap();
+        let err = match err.exc_type.as_str() {
+            "TaskError" => Exc::TaskError(TaskError::ExpectedError(err.exc_message)),
+            "TimeoutError" => Exc::TaskError(TaskError::TimeoutError),
+            "RetryTaskError" => Exc::TaskError(TaskError::Retry(None /*todo*/)),
+            "RevokedError" => Exc::TaskError(TaskError::RevokedError(err.exc_message)),
+            _ => Exc::TaskError(TaskError::UnexpectedError(err.exc_message)), // todo
+        };
+        Err(err)
+    }
+
+    fn _prepare_value<D: Serialize>(result: &D, s: SerializerKind) -> Result<AnyValue, Error> {
+        // todo
+        //   if result is ResultBase {
+        //       result.as_tuple()
+        //   }
+        s.try_to_value(result)
+    }
+
+    fn _prepare_exception(exc: &Exc, s: SerializerKind) -> Result<AnyValue, Error> {
+        let (typ, msg, module) = match exc {
+            Exc::TaskError(err) => match err {
+                TaskError::ExpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
+                TaskError::UnexpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),
+                TaskError::TimeoutError => ("TimeoutError", "", "celery.exceptions"),
+                TaskError::Retry(_time) => {
+                    ("RetryTaskError", "todo!" /*todo*/, "celery.exceptions")
+                }
+                TaskError::RevokedError(err) => ("RevokedError", err.as_str(), "celery.exceptions"),
+            },
+            Exc::ExpirationError => ("TaskError", "", "celery.exceptions"),
+            Exc::Retry(_time) => ("RetryTaskError", "todo!", "celery.exceptions"),
+        };
+
+        let exc_struct = GeneralError {
+            exc_type: typ.into(),
+            exc_message: msg.into(),
+            exc_module: module.into(),
+        };
+
+        s.try_to_value(&exc_struct)
     }
 }

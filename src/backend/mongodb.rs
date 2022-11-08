@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use mongodb::bson::{doc, DateTime};
+use mongodb::bson::doc;
 use mongodb::options::FindOneAndReplaceOptions;
 use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
@@ -8,79 +8,38 @@ use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerd
 use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
-use crate::protocol::{State, TaskId, TaskMeta, Traceback};
+use crate::protocol::{TaskId, TaskMeta, TaskMetaInfo};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MongoTaskMeta {
     _id: String,
-    status: State,
+    #[serde(flatten)]
+    info: TaskMetaInfo,
     result: String,
-    traceback: Option<Traceback>,
-    children: Vec<String>,
-
-    date_done: Option<DateTime>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    group_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    parent_id: Option<String>,
-
-    // extend request meta
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    args: Option<Vec<u8>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kwargs: Option<Vec<u8>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    worker: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    retries: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    queue: Option<String>,
 }
 
 impl MongoTaskMeta {
     fn into_task_meta(self, serializer: SerializerKind) -> TaskMeta {
         TaskMeta {
-            task_id: self._id.to_string(),
-            status: self.status,
+            info: TaskMetaInfo {
+                task_id: self._id.to_string(),
+                date_done: self.info.date_done, // .map(DateTime::try_to_rfc3339_string)
+                                                // .map(Result::unwrap),
+                ..self.info
+            },
             result: serializer.load(&self.result),
-            traceback: self.traceback,
-            children: self.children,
-            date_done: self
-                .date_done
-                .map(DateTime::try_to_rfc3339_string)
-                .map(Result::unwrap),
-            group_id: self.group_id,
-            parent_id: self.parent_id,
-            name: self.name,
-            args: self.args,
-            kwargs: self.kwargs,
-            worker: self.worker,
-            retries: self.retries,
-            queue: self.queue,
         }
     }
 
     fn from_task_meta(task_meta: TaskMeta, serializer: SerializerKind) -> Self {
         MongoTaskMeta {
-            _id: task_meta.task_id.clone(),
-            status: task_meta.status,
+            _id: task_meta.info.task_id.clone(),
+            info: TaskMetaInfo {
+                date_done: task_meta.info.date_done, // .map(DateTime::parse_rfc3339_str)
+                                                     // .map(Result::unwrap),
+                ..task_meta.info
+            },
             result: serializer.dump(&task_meta.result).2,
-            traceback: task_meta.traceback,
-            children: task_meta.children,
-            date_done: task_meta
-                .date_done
-                .map(DateTime::parse_rfc3339_str)
-                .map(Result::unwrap),
-            group_id: task_meta.group_id,
-            parent_id: task_meta.parent_id,
-            name: task_meta.name,
-            args: task_meta.args,
-            kwargs: task_meta.kwargs,
-            worker: task_meta.worker,
-            retries: task_meta.retries,
-            queue: task_meta.queue,
         }
     }
 }
@@ -196,11 +155,7 @@ impl BackendProtocolLayer for MongoDbBackend {
                 .into_task_meta(self._serializer());
         }
 
-        TaskMeta {
-            status: State::PENDING,
-            result: self._serializer().data_to_value(&None::<()>),
-            ..TaskMeta::default()
-        }
+        TaskMeta::default()
     }
 
     fn _decode_task_meta(&self, _payload: String) -> TaskMeta {

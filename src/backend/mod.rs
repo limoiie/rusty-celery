@@ -3,17 +3,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::backend::options::{
     MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkRevokeOptions, MarkStartOptions,
-    StoreOptions, WaitForOptions,
+    StoreOptions, WaitOptions,
 };
 use crate::config::BackendConfig;
-use crate::error::{BackendError, TraceError};
+use crate::error::BackendError;
 use crate::kombu_serde::SerializerKind;
-use crate::protocol::{State, TaskId, TaskMeta};
+use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
 use crate::task::{Request, Task};
 
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
@@ -26,9 +26,6 @@ mod mongodb;
 pub mod options;
 mod redis;
 
-type Exc = TraceError;
-
-pub type TaskResult<D> = Result<D, Exc>;
 pub type BackendResult<D> = Result<D, BackendError>;
 pub type GetTaskResult<D> = BackendResult<ExecResult<D>>;
 
@@ -70,7 +67,7 @@ pub trait Backend: Send + Sync + Sized {
     fn basic(&self) -> &BackendBasic;
 
     /// Wait until the task is ready, and return the [TaskMeta].
-    async fn wait_for(&self, task_id: &TaskId, option: WaitForOptions) -> BackendResult<TaskMeta>;
+    async fn wait(&self, task_id: &TaskId, option: WaitOptions) -> BackendResult<TaskMeta>;
 
     /// Forget the result for the given task.
     async fn forget(&self, task_id: &TaskId);
@@ -102,11 +99,6 @@ pub trait Backend: Send + Sync + Sized {
 
     /// Get [TaskMeta] by task id.
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
-
-    /// Recover task result from its [TaskMeta].
-    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<ExecResult<D>>
-    where
-        D: for<'de> Deserialize<'de>;
 
     /// Store the task result to the [crate::backend::Backend].
     async fn store_result<D, T>(
