@@ -60,7 +60,7 @@ impl ImplLayer for DisabledBackend {
     }
 
     #[allow(unused)]
-    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result_<D>(&self, task_meta: TaskMeta) -> Option<ExecResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
@@ -71,7 +71,7 @@ impl ImplLayer for DisabledBackend {
     async fn store_result_<D, T>(
         &self,
         task_id: &TaskId,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         state: State,
         store: &StoreOptions<T>,
     ) where

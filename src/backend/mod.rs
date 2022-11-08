@@ -30,7 +30,7 @@ type Exc = TraceError;
 
 pub type TaskResult<D> = Result<D, Exc>;
 pub type BackendResult<D> = Result<D, BackendError>;
-pub type GetTaskResult<D> = Result<TaskResult<D>, BackendError>;
+pub type GetTaskResult<D> = BackendResult<ExecResult<D>>;
 
 /// The basic part of a backend that is common for all backend implementations.
 pub struct BackendBasic {
@@ -104,7 +104,7 @@ pub trait Backend: Send + Sync + Sized {
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
 
     /// Recover task result from its [TaskMeta].
-    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<ExecResult<D>>
     where
         D: for<'de> Deserialize<'de>;
 
@@ -112,7 +112,7 @@ pub trait Backend: Send + Sync + Sized {
     async fn store_result<D, T>(
         &self,
         task_id: &TaskId,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         status: State,
         store: &StoreOptions<T>,
     ) where
@@ -121,7 +121,7 @@ pub trait Backend: Send + Sync + Sized {
 
     async fn on_chord_part_return<T, D>(
         &self,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         status: State,
         request: &Request<T>,
     ) where

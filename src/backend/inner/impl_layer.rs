@@ -5,7 +5,7 @@ use crate::backend::options::{
     MarkDoneOptions, MarkFailureOptions, MarkRetryOptions, MarkRevokeOptions, MarkStartOptions,
     StoreOptions, WaitForOptions,
 };
-use crate::backend::{Backend, BackendBasic, BackendBuilder, BackendResult, TaskResult};
+use crate::backend::{Backend, BackendBasic, BackendBuilder, BackendResult};
 use crate::error::{BackendError, TaskError, TraceError};
 use crate::protocol::{State, TaskId, TaskMeta};
 use crate::task::{Request, Task};
@@ -86,7 +86,7 @@ pub trait ImplLayer: Send + Sync + Sized {
     where
         T: Task,
     {
-        let err = TaskResult::<()>::Err(option.exc);
+        let err = ExecResult::<()>::Err(option.exc);
 
         if option.store_result {
             self.store_result_(task_id, err.clone(), option.status, &option.store)
@@ -111,7 +111,7 @@ pub trait ImplLayer: Send + Sync + Sized {
         T: Task,
     {
         let exc = TraceError::TaskError(TaskError::RevokedError(option.reason));
-        let err = TaskResult::<()>::Err(exc);
+        let err = ExecResult::<()>::Err(exc);
 
         if option.store_result {
             self.store_result_(task_id, err.clone(), option.status, &option.store)
@@ -130,7 +130,7 @@ pub trait ImplLayer: Send + Sync + Sized {
     where
         T: Task,
     {
-        let err = TaskResult::<()>::Err(option.exc);
+        let err = ExecResult::<()>::Err(option.exc);
 
         self.store_result_(task_id, err, option.status, &option.store)
             .await;
@@ -145,7 +145,7 @@ pub trait ImplLayer: Send + Sync + Sized {
     async fn store_result_<D, T>(
         &self,
         task_id: &TaskId,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         status: State,
         store: &StoreOptions<T>,
     ) where
@@ -155,7 +155,7 @@ pub trait ImplLayer: Send + Sync + Sized {
     #[allow(unused)]
     async fn on_chord_part_return_<T, D>(
         &self,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         state: State,
         request: &Request<T>,
     ) where
@@ -247,7 +247,7 @@ impl<L: ImplLayer> Backend for L {
         self.get_task_meta_by_(task_id, cache).await
     }
 
-    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<TaskResult<D>>
+    fn restore_result<D>(&self, task_meta: TaskMeta) -> Option<ExecResult<D>>
     where
         D: for<'de> Deserialize<'de>,
     {
@@ -257,7 +257,7 @@ impl<L: ImplLayer> Backend for L {
     async fn store_result<D, T>(
         &self,
         task_id: &TaskId,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         status: State,
         store: &StoreOptions<T>,
     ) where
@@ -269,7 +269,7 @@ impl<L: ImplLayer> Backend for L {
 
     async fn on_chord_part_return<T, D>(
         &self,
-        result: TaskResult<D>,
+        result: ExecResult<D>,
         status: State,
         request: &Request<T>,
     ) where

@@ -1,4 +1,5 @@
-use crate::backend::{Exc, TaskResult};
+use serde::{Deserialize, Serialize};
+
 use crate::error::TaskError;
 use crate::kombu_serde::{AnyValue, SerializerKind};
 use crate::protocol::State;
