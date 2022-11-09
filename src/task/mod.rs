@@ -1,22 +1,27 @@
 //! Provides the [`Task`] trait as well as options for configuring tasks.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rand::distributions::{Distribution, Uniform};
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+pub use async_result::AsyncResult;
+pub use base_result::BaseResult;
+pub use base_result::BaseResultInfluenceParent;
+pub use options::TaskOptions;
+pub use request::Request;
+pub use signature::Signature;
 
 use crate::error::TaskError;
 
 mod async_result;
+mod base_result;
+mod group_result;
 mod options;
 mod request;
 mod signature;
-
-pub use async_result::AsyncResult;
-pub use options::TaskOptions;
-pub use request::Request;
-pub use signature::Signature;
 
 /// The return type for a task.
 pub type TaskResult<R> = Result<R, TaskError>;
@@ -39,7 +44,7 @@ where
 /// this trait. For more information see the [tasks chapter](https://rusty-celery.github.io/guide/defining-tasks.html)
 /// in the Rusty Celery Book.
 #[async_trait]
-pub trait Task: Send + Sync + std::marker::Sized {
+pub trait Task: Send + Sync + Sized {
     /// The name of the task. When a task is registered it will be registered with this name.
     const NAME: &'static str;
 

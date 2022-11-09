@@ -97,7 +97,6 @@ pub mod error;
 pub mod kombu_serde;
 pub mod prelude;
 pub mod protocol;
-pub mod result;
 pub mod task;
 
 #[cfg(feature = "codegen")]

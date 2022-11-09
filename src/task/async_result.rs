@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use async_recursion::async_recursion;
+use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -10,70 +10,47 @@ use crate::backend::options::WaitOptions;
 use crate::backend::{Backend, GetTaskResult};
 use crate::kombu_serde::AnyValue;
 use crate::protocol::{ExecResult, State, TaskMeta, TaskMetaInfo};
-
-type CacheResult<R> = Option<TaskMeta<ExecResult<R>>>;
+use crate::task::base_result::{
+    BaseResult, BaseResultInfluenceParent, CachedTaskMeta, GetOptions, VoidResult,
+};
 
 /// An [`AsyncResult`] is a handle for the result of a task.
 #[derive(Debug, Clone)]
-pub struct AsyncResult<B, R, PR = AnyValue>
+pub struct AsyncResult<B, R = (), P = VoidResult>
 where
     B: Backend,
-    R: for<'de> Deserialize<'de> + Send + Sync,
-    PR: for<'de> Deserialize<'de> + Send + Sync,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub task_id: String,
-    parent: Option<Box<AsyncResult<B, PR, AnyValue>>>,
+    parent: Option<Arc<P>>,
     backend: Arc<B>,
-    cache: Arc<Mutex<RefCell<CacheResult<R>>>>,
+    cache: Arc<Mutex<RefCell<CachedTaskMeta<R>>>>,
 }
 
-#[allow(unused)]
-pub struct RevokeOption {
-    terminate: bool,
-    wait: bool,
-    timeout: Option<u64>,
-}
-
-#[derive(Default)]
-pub struct GetOption {
-    timeout: Option<chrono::Duration>,
-    interval: Option<chrono::Duration>,
-}
-
-impl<B, R, PR> AsyncResult<B, R, PR>
+#[async_trait]
+impl<B, R, P> BaseResult<R> for AsyncResult<B, R, P>
 where
     B: Backend,
-    R: for<'de> Deserialize<'de> + Send + Sync + Clone,
-    PR: for<'de> Deserialize<'de> + Send + Sync + Clone,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: Send + Sync,
 {
-    pub fn new(task_id: &str, backend: Arc<B>) -> Self {
-        Self {
-            task_id: task_id.into(),
-            parent: None,
-            backend,
-            cache: Arc::new(Mutex::new(RefCell::new(None))),
-        }
+    async fn is_successful(&self) -> bool {
+        self.get_task_meta_info().await.status.is_successful()
     }
 
-    #[async_recursion]
-    pub async fn forget(&self) {
-        self.cache.lock().await.replace(None);
-        if let Some(parent) = &self.parent {
-            parent.forget().await;
-        }
-        self.backend.forget(&self.task_id).await
+    async fn is_failure(&self) -> bool {
+        self.get_task_meta_info().await.status.is_exception()
     }
 
-    #[allow(unused)]
-    pub async fn revoke(&self, option: Option<RevokeOption>) {
-        unimplemented!()
+    async fn is_waiting(&self) -> bool {
+        !self.get_task_meta_info().await.status.is_ready()
     }
 
-    pub async fn get(&self, option: Option<GetOption>) -> GetTaskResult<R> {
-        self.wait(option).await
+    async fn is_ready(&self) -> bool {
+        self.get_task_meta_info().await.status.is_ready()
     }
 
-    pub async fn wait(&self, option: Option<GetOption>) -> GetTaskResult<R> {
+    async fn get(&self, option: Option<GetOptions>) -> GetTaskResult<R> {
         let option = option.unwrap_or_default();
 
         let meta = self
@@ -103,6 +80,37 @@ where
             .clone();
 
         Ok(result)
+    }
+}
+
+#[async_trait]
+impl<B, R, P> BaseResultInfluenceParent<R> for AsyncResult<B, R, P>
+where
+    B: Backend,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResultInfluenceParent<R> + Send + Sync,
+{
+    async fn forget_iteratively(&self) {
+        self.cache.lock().await.replace(None);
+        if let Some(parent) = &self.parent {
+            parent.forget_iteratively().await;
+        }
+        self.backend.forget(&self.task_id).await
+    }
+}
+
+impl<B, R, P> AsyncResult<B, R, P>
+where
+    B: Backend,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+{
+    pub fn new(task_id: &str, backend: Arc<B>) -> Self {
+        Self {
+            task_id: task_id.into(),
+            parent: None,
+            backend,
+            cache: Arc::new(Mutex::new(RefCell::new(None))),
+        }
     }
 
     pub async fn status(&self) -> State {
