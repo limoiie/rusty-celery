@@ -23,7 +23,7 @@ use crate::config::{
     BackendConfig, BrokerConfig, ConfigBackend, ConfigBroker, ConfigTask, TaskConfig,
 };
 use crate::error::{BrokerError, CeleryError, TraceError};
-use crate::kombu_serde::SerializerKind;
+use crate::protocol::ContentType;
 use crate::protocol::{Message, TryDeserializeMessage};
 use crate::routing::Rule;
 use crate::task::{AsyncResult, Signature, Task, TaskEvent, TaskOptions, TaskStatus};
@@ -55,7 +55,7 @@ impl CeleryConfig {
             },
             backend: BackendConfig {
                 url: String::new(),
-                result_serializer: SerializerKind::JSON,
+                result_serializer: ContentType::Json,
                 result_expires: Some(chrono::Duration::days(1)),
             },
         }

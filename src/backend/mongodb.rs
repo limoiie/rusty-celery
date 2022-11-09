@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
 use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
-use crate::kombu_serde::SerializerKind;
+use crate::protocol::ContentType;
 use crate::protocol::{TaskId, TaskMeta, TaskMetaInfo};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -19,27 +19,25 @@ pub struct MongoTaskMeta {
 }
 
 impl MongoTaskMeta {
-    fn into_task_meta(self, serializer: SerializerKind) -> TaskMeta {
+    fn into_task_meta(self, content_type: ContentType) -> TaskMeta {
         TaskMeta {
             info: TaskMetaInfo {
                 task_id: self._id.to_string(),
-                date_done: self.info.date_done, // .map(DateTime::try_to_rfc3339_string)
-                                                // .map(Result::unwrap),
+                date_done: self.info.date_done,
                 ..self.info
             },
-            result: serializer.load(&self.result),
+            result: content_type.load(&self.result),
         }
     }
 
-    fn from_task_meta(task_meta: TaskMeta, serializer: SerializerKind) -> Self {
+    fn from_task_meta(task_meta: TaskMeta, content_type: ContentType) -> Self {
         MongoTaskMeta {
             _id: task_meta.info.task_id.clone(),
             info: TaskMetaInfo {
-                date_done: task_meta.info.date_done, // .map(DateTime::parse_rfc3339_str)
-                                                     // .map(Result::unwrap),
+                date_done: task_meta.info.date_done,
                 ..task_meta.info
             },
-            result: serializer.dump(&task_meta.result).2,
+            result: content_type.dump(&task_meta.result),
         }
     }
 }
@@ -114,7 +112,7 @@ impl BackendBasicLayer for MongoDbBackend {
 }
 
 impl BackendSerdeLayer for MongoDbBackend {
-    fn _serializer(&self) -> SerializerKind {
+    fn _serializer(&self) -> ContentType {
         self.backend_basic.result_serializer
     }
 }

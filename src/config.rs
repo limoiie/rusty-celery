@@ -2,7 +2,7 @@ use core::marker::Sized;
 use core::option::Option;
 use core::option::Option::Some;
 
-use crate::kombu_serde::SerializerKind;
+use crate::protocol::ContentType;
 use crate::protocol::MessageContentType;
 use crate::task::TaskOptions;
 
@@ -151,7 +151,7 @@ pub trait ConfigBroker: Sized {
 #[derive(Clone, Debug)]
 pub struct BackendConfig {
     pub url: String,
-    pub result_serializer: SerializerKind,
+    pub result_serializer: ContentType,
     pub result_expires: Option<chrono::Duration>,
 }
 
@@ -165,7 +165,7 @@ pub trait ConfigBackend: Sized {
     }
 
     /// Set the serializer for storing results into the backend.
-    fn result_serializer(mut self, serializer: SerializerKind) -> Self {
+    fn result_serializer(mut self, serializer: ContentType) -> Self {
         self.get_backend_config().result_serializer = serializer;
         self
     }

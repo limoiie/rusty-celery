@@ -17,7 +17,7 @@ use serde_json::{from_slice, from_value, json, Value};
 use uuid::Uuid;
 
 use crate::error::{ContentTypeError, ProtocolError, TaskError, TraceError};
-use crate::kombu_serde::{AnyValue, SerializerKind};
+use crate::kombu_serde::AnyValue;
 use crate::task::{Signature, Task};
 
 static ORIGIN: Lazy<Option<String>> = Lazy::new(|| {
@@ -28,17 +28,159 @@ static ORIGIN: Lazy<Option<String>> = Lazy::new(|| {
 });
 
 /// Serialization formats supported for message body.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum MessageContentType {
+    #[default]
     Json,
+    #[cfg(any(test, feature = "extra_content_types"))]
     Yaml,
+    #[cfg(any(test, feature = "extra_content_types"))]
     Pickle,
+    #[cfg(any(test, feature = "extra_content_types"))]
     MsgPack,
 }
 
-impl Default for MessageContentType {
-    fn default() -> Self {
-        MessageContentType::Json
+impl MessageContentType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            MessageContentType::Json => "application/json",
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Yaml => "application/x-yaml",
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Pickle => "application/x-python-serialize",
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::MsgPack => "application/x-msgpack",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<MessageContentType> {
+        match name {
+            "application/json" => Some(MessageContentType::Json),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            "application/x-yaml" => Some(MessageContentType::Yaml),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            "application/x-python-serialize" => Some(MessageContentType::Pickle),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            "application/x-msgpack" => Some(MessageContentType::MsgPack),
+            _ => None,
+        }
+    }
+}
+
+impl MessageContentType {
+    pub fn dump_bytes<D>(&self, data: &D) -> Vec<u8>
+    where
+        D: Serialize,
+    {
+        self.try_dump_bytes(data).unwrap()
+    }
+
+    pub fn try_dump_bytes<D>(&self, data: &D) -> Result<Vec<u8>, ContentTypeError>
+    where
+        D: Serialize,
+    {
+        match self {
+            MessageContentType::Json => serde_json::to_vec(data).map_err(ContentTypeError::from),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Yaml => serde_yaml::to_vec(data).map_err(ContentTypeError::from),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Pickle => {
+                serde_pickle::to_vec(data, serde_pickle::SerOptions::new())
+                    .map_err(ContentTypeError::from)
+            }
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::MsgPack => rmp_serde::to_vec(data).map_err(ContentTypeError::from),
+        }
+    }
+
+    pub fn dump<D>(&self, data: &D) -> String
+    where
+        D: Serialize,
+    {
+        self.try_dump(data).unwrap()
+    }
+
+    pub fn try_dump<D>(&self, data: &D) -> Result<String, ContentTypeError>
+    where
+        D: Serialize,
+    {
+        match self {
+            MessageContentType::Json => serde_json::to_string(data).map_err(ContentTypeError::from),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Yaml => serde_yaml::to_string(data).map_err(ContentTypeError::from),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Pickle | MessageContentType::MsgPack => {
+                Err(ContentTypeError::Unsupported(
+                    "Can not dump as string: this kind of content may contain raw bytes".into(),
+                ))
+            }
+        }
+    }
+
+    pub fn load<D>(&self, data: &String) -> D
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        debug!(
+            "Try decoding as {} with `{}'",
+            std::any::type_name::<D>(),
+            data
+        );
+
+        match self {
+            MessageContentType::Json => serde_json::from_str(data.as_str()).unwrap(),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Yaml => serde_yaml::from_str(data.as_str()).unwrap(),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn try_load<D>(&self, data: &String) -> Result<D, ContentTypeError>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
+        debug!(
+            "Try decoding as {} with `{}'",
+            std::any::type_name::<D>(),
+            data
+        );
+
+        match self {
+            MessageContentType::Json => {
+                serde_json::from_str(data.as_str()).map_err(ContentTypeError::from)
+            }
+            #[cfg(any(test, feature = "extra_content_types"))]
+            MessageContentType::Yaml => {
+                serde_yaml::from_str(data.as_str()).map_err(ContentTypeError::from)
+            }
+            #[cfg(any(test, feature = "extra_content_types"))]
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn to_value<D>(&self, data: &D) -> AnyValue
+    where
+        D: Serialize,
+    {
+        self.try_to_value(data).unwrap()
+    }
+
+    pub fn try_to_value<D>(&self, data: &D) -> Result<AnyValue, ContentTypeError>
+    where
+        D: Serialize,
+    {
+        match self {
+            ContentType::Json => serde_json::to_value(data)
+                .map(Into::into)
+                .map_err(ContentTypeError::from),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            ContentType::Yaml => serde_yaml::to_value(data)
+                .map(Into::into)
+                .map_err(ContentTypeError::from),
+            #[cfg(any(test, feature = "extra_content_types"))]
+            _ => unimplemented!(),
+        }
     }
 }
 
@@ -81,14 +223,7 @@ where
     /// JSON is the default, and is also the only option unless the feature "extra_content_types" is enabled.
     #[cfg(any(test, feature = "extra_content_types"))]
     pub fn content_type(mut self, content_type: MessageContentType) -> Self {
-        use MessageContentType::*;
-        let content_type_name = match content_type {
-            Json => "application/json",
-            Yaml => "application/x-yaml",
-            Pickle => "application/x-python-serialize",
-            MsgPack => "application/x-msgpack",
-        };
-        self.message.properties.content_type = content_type_name.into();
+        self.message.properties.content_type = content_type.name().into();
         self
     }
 
@@ -209,23 +344,14 @@ where
         if let Some(params) = self.params.take() {
             let body = MessageBody::<T>::new(params);
 
-            let raw_body = match self.message.properties.content_type.as_str() {
-                "application/json" => serde_json::to_vec(&body)?,
-                #[cfg(any(test, feature = "extra_content_types"))]
-                "application/x-yaml" => serde_yaml::to_vec(&body)?,
-                #[cfg(any(test, feature = "extra_content_types"))]
-                "application/x-python-serialize" => {
-                    serde_pickle::to_vec(&body, serde_pickle::SerOptions::new())?
-                }
-                #[cfg(any(test, feature = "extra_content_types"))]
-                "application/x-msgpack" => rmp_serde::to_vec(&body)?,
-                _ => {
-                    return Err(ProtocolError::BodySerializationError(
-                        ContentTypeError::Unknown,
-                    ));
-                }
+            let content_type =
+                MessageContentType::from_name(self.message.properties.content_type.as_str());
+            self.message.raw_body = match content_type {
+                Some(content_type) => content_type.try_dump_bytes(&body)?,
+                None => Err(ProtocolError::BodySerializationError(
+                    ContentTypeError::Unknown,
+                ))?,
             };
-            self.message.raw_body = raw_body;
         };
         Ok(self.message)
     }
@@ -780,6 +906,8 @@ pub struct GeneralError {
     exc_module: String,
 }
 
+pub type ContentType = MessageContentType;
+
 /// The general part of a task meta.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TaskMetaInfo {
@@ -839,7 +967,7 @@ pub struct TaskMetaInfo {
 
     /// The content type of the result.
     #[serde(skip)]
-    pub content_type: SerializerKind,
+    pub content_type: ContentType,
 }
 
 /// Task meta information.
@@ -974,7 +1102,7 @@ mod inner {
         Err(err)
     }
 
-    fn _prepare_value<D: Serialize>(result: &D, s: SerializerKind) -> Result<AnyValue, Error> {
+    fn _prepare_value<D: Serialize>(result: &D, s: ContentType) -> Result<AnyValue, Error> {
         // todo
         //   if result is ResultBase {
         //       result.as_tuple()
@@ -982,7 +1110,7 @@ mod inner {
         s.try_to_value(result)
     }
 
-    fn _prepare_exception(exc: &Exc, s: SerializerKind) -> Result<AnyValue, Error> {
+    fn _prepare_exception(exc: &Exc, s: ContentType) -> Result<AnyValue, Error> {
         let (typ, msg, module) = match exc {
             Exc::TaskError(err) => match err {
                 TaskError::ExpectedError(err) => ("TaskError", err.as_str(), "celery.exceptions"),

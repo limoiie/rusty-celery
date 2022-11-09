@@ -6,7 +6,7 @@ use crate::backend::inner::key_value_store_layer::Key;
 use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, KeyValueStoreLayer};
 use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
-use crate::kombu_serde::SerializerKind;
+use crate::protocol::ContentType;
 
 pub struct RedisBackendBuilder {
     backend_basic: BackendBasic,
@@ -49,7 +49,7 @@ impl BackendBuilder for RedisBackendBuilder {
 }
 
 impl BackendSerdeLayer for RedisBackend {
-    fn _serializer(&self) -> SerializerKind {
+    fn _serializer(&self) -> ContentType {
         self.backend_basic.result_serializer
     }
 }

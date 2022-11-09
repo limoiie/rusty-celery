@@ -12,7 +12,7 @@ use crate::backend::options::{
 };
 use crate::config::BackendConfig;
 use crate::error::BackendError;
-use crate::kombu_serde::SerializerKind;
+use crate::protocol::ContentType;
 use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
 use crate::task::{Request, Task};
 
@@ -38,7 +38,7 @@ pub struct BackendBasic {
     pub safe_url: String,
 
     /// The [SerializerKind] that used to persistent [TaskMeta].
-    pub result_serializer: SerializerKind,
+    pub result_serializer: ContentType,
 
     /// Expiration for a task result.
     pub result_expires: Option<chrono::Duration>,
@@ -52,7 +52,7 @@ impl BackendBasic {
         Self {
             url: backend_url.to_owned(),
             safe_url: backend_url.to_owned(),
-            result_serializer: SerializerKind::JSON,
+            result_serializer: ContentType::Json,
             result_expires: None,
             cache: Arc::new(Mutex::new(RefCell::new(HashMap::new()))),
         }

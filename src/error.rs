@@ -313,6 +313,9 @@ pub enum ContentTypeError {
     #[error("MessagePack value error")]
     MsgPackValue(#[from] rmpv::ext::Error),
 
+    #[error("Unsupported \"{0}\"")]
+    Unsupported(String),
+
     #[error("Unknown content type error")]
     Unknown,
 }
