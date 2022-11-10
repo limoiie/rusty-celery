@@ -344,3 +344,23 @@ macro_rules! beat {
         );
     };
 }
+
+#[macro_export]
+macro_rules! group_any {
+    (
+        $app:expr, [
+            $( $task:expr ),*
+        ]
+    ) => {{
+        let ref app = $app;
+
+        $crate::task::GroupAnyResult::<_, $crate::task::VoidResult>::new(
+            "fake-group-id".to_string(),
+            app.backend.clone(),
+            [ $( Arc::new(Box::new(
+                    app.send_task($task).await?.to_any()
+                 ) as Box<dyn $crate::task::FullResult<$crate::kombu_serde::AnyValue>>),
+            )* ]
+        )
+    }};
+}

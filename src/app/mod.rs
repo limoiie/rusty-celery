@@ -268,7 +268,7 @@ where
             queue,
         );
         self.broker.send(&message, queue).await?;
-        Ok(AsyncResult::<D, T::Returns>::new(message.task_id(), self.backend.clone()))
+        Ok(AsyncResult::<D, T::Returns>::new(message.task_id().to_owned(), self.backend.clone()))
     }
 
     /// Register a task.

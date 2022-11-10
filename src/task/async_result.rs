@@ -84,11 +84,11 @@ where
 }
 
 #[async_trait]
-impl<B, R, P> BaseResultInfluenceParent<R> for AsyncResult<B, R, P>
+impl<B, R, P> BaseResultInfluenceParent for AsyncResult<B, R, P>
 where
     B: Backend,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-    P: BaseResultInfluenceParent<R> + Send + Sync,
+    P: BaseResultInfluenceParent + Send + Sync,
 {
     async fn forget_iteratively(&self) {
         self.cache.lock().await.replace(None);
@@ -104,11 +104,20 @@ where
     B: Backend,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
-    pub fn new(task_id: &str, backend: Arc<B>) -> Self {
+    pub fn new(task_id: String, backend: Arc<B>) -> Self {
         Self {
-            task_id: task_id.into(),
+            task_id,
             parent: None,
             backend,
+            cache: Arc::new(Mutex::new(RefCell::new(None))),
+        }
+    }
+
+    pub fn to_any(self) -> AsyncResult<B, AnyValue, P> {
+        AsyncResult {
+            task_id: self.task_id,
+            parent: self.parent,
+            backend: self.backend,
             cache: Arc::new(Mutex::new(RefCell::new(None))),
         }
     }

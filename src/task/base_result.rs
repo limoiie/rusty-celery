@@ -1,26 +1,30 @@
+use std::fmt::{Debug, Formatter};
+
 use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::backend::GetTaskResult;
+use crate::kombu_serde::AnyValue;
 use crate::protocol::{ExecResult, TaskMeta};
 
 pub type CachedTaskMeta<R> = Option<TaskMeta<ExecResult<R>>>;
 
 #[allow(unused)]
+#[derive(Clone, Default)]
 pub struct RevokeOptions {
     pub(crate) terminate: bool,
     pub(crate) wait: bool,
     pub(crate) timeout: Option<u64>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct GetOptions {
     pub(crate) timeout: Option<chrono::Duration>,
     pub(crate) interval: Option<chrono::Duration>,
 }
 
 #[async_trait]
-pub trait BaseResult<R>
+pub trait BaseResult<R>: Send + Sync
 where
     R: for<'de> Deserialize<'de> + Send + Sync + Clone,
 {
@@ -40,15 +44,31 @@ where
 }
 
 #[async_trait]
-pub trait BaseResultInfluenceParent<R>: BaseResult<R>
+pub trait BaseResultInfluenceParent {
+    async fn forget_iteratively(&self);
+
+    // #[allow(unused)]
+    // async fn revoke_iteratively(&self, options: Option<RevokeOptions>) {
+    //     unimplemented!()
+    // }
+}
+
+pub trait FullResult<R>: BaseResult<R> + BaseResultInfluenceParent
 where
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
-    async fn forget_iteratively(&self);
+}
 
-    #[allow(unused)]
-    async fn revoke_iteratively(&self, options: Option<RevokeOptions>) {
-        unimplemented!()
+impl<T, R> FullResult<R> for T
+where
+    T: BaseResult<R> + BaseResultInfluenceParent,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+{
+}
+
+impl Debug for dyn FullResult<AnyValue> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<#FullResult#>")
     }
 }
 
@@ -76,16 +96,14 @@ where
         unreachable!()
     }
 
+    #[allow(unused)]
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
         unreachable!()
     }
 }
 
 #[async_trait]
-impl<R> BaseResultInfluenceParent<R> for VoidResult
-where
-    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-{
+impl BaseResultInfluenceParent for VoidResult {
     async fn forget_iteratively(&self) {
         unreachable!()
     }
