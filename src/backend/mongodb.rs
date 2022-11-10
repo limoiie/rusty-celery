@@ -1,13 +1,13 @@
 use async_trait::async_trait;
+use mongodb::{Client, Collection, Database};
 use mongodb::bson::doc;
 use mongodb::options::FindOneAndReplaceOptions;
-use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 
-use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
 use crate::backend::{BackendBasic, BackendBuilder};
+use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
 use crate::error::BackendError;
-use crate::protocol::ContentType;
+use crate::protocol::{ContentType, GroupMeta, GroupMetaInfo};
 use crate::protocol::{TaskId, TaskMeta, TaskMetaInfo};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -38,6 +38,34 @@ impl MongoTaskMeta {
                 ..task_meta.info
             },
             result: content_type.dump(&task_meta.result),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MongoGroupMeta {
+    _id: String,
+    #[serde(flatten)]
+    info: GroupMetaInfo,
+    result: String,
+}
+
+impl MongoGroupMeta {
+    fn into_group_meta(self, content_type: ContentType) -> GroupMeta {
+        GroupMeta {
+            info: GroupMetaInfo {
+                task_id: self._id.to_string(),
+                ..self.info
+            },
+            result: content_type.load(&self.result),
+        }
+    }
+
+    fn from_group_meta(group_meta: GroupMeta, content_type: ContentType) -> Self {
+        MongoGroupMeta {
+            _id: group_meta.info.task_id.clone(),
+            info: group_meta.info,
+            result: content_type.dump(&group_meta.result),
         }
     }
 }
@@ -90,7 +118,7 @@ pub struct MongoDbBackend {
 impl MongoDbBackend {
     const DATABASE_NAME: &'static str = "celery";
     const TASK_META_COL: &'static str = "celery_taskmeta";
-    // const GROUP_META_COL: &'static str = "celery_groupmeta";
+    const GROUP_META_COL: &'static str = "celery_groupmeta";
 
     fn database(&self) -> Database {
         self.connection.database(Self::DATABASE_NAME)
@@ -99,8 +127,11 @@ impl MongoDbBackend {
     // todo: cache?
     fn collection(&self) -> Collection<MongoTaskMeta> {
         // todo: create index on field date_done?
-        self.database()
-            .collection::<MongoTaskMeta>(Self::TASK_META_COL)
+        self.database().collection(Self::TASK_META_COL)
+    }
+
+    fn group_collection(&self) -> Collection<MongoGroupMeta> {
+        self.database().collection(Self::GROUP_META_COL)
     }
 }
 
@@ -153,13 +184,56 @@ impl BackendProtocolLayer for MongoDbBackend {
                 .into_task_meta(self._serializer());
         }
 
-        TaskMeta::default()
+        TaskMeta {
+            info: TaskMetaInfo {
+                task_id: task_id.to_string(),
+                ..TaskMetaInfo::default()
+            },
+            ..TaskMeta::default()
+        }
     }
 
-    fn _decode_task_meta(&self, _payload: String) -> TaskMeta {
-        unimplemented!(
-            "TaskMeta is not stored as serialized in MongoDbBackend, \
-hence never need to decode it as a whole."
-        )
+    async fn _store_group_meta<D>(&self, group_id: &str, group_meta: GroupMeta)
+    where
+        D: Serialize + Send + Sync,
+    {
+        let group_meta = MongoGroupMeta::from_group_meta(group_meta, self._serializer());
+
+        let opt = FindOneAndReplaceOptions::builder().upsert(true).build();
+
+        self.group_collection()
+            .find_one_and_replace(doc! {"_id": group_id}, group_meta, opt)
+            .await
+            .unwrap();
+    }
+
+    async fn _forget_group_meta_by(&self, group_id: &str) {
+        self.group_collection()
+            .delete_one(doc! {"_id": group_id}, None)
+            .await
+            .unwrap();
+    }
+
+    async fn _fetch_group_meta_by(&self, group_id: &str) -> GroupMeta {
+        let mut cursor = self
+            .group_collection()
+            .find(doc! {"_id": group_id}, None)
+            .await
+            .unwrap();
+
+        if cursor.advance().await.unwrap() {
+            return cursor
+                .deserialize_current()
+                .unwrap()
+                .into_group_meta(self._serializer());
+        }
+
+        GroupMeta {
+            info: GroupMetaInfo {
+                task_id: group_id.to_string(),
+                ..GroupMetaInfo::default()
+            },
+            ..GroupMeta::default()
+        }
     }
 }

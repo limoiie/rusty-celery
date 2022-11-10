@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use bstr::ByteVec;
+use serde::Serialize;
 
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
 use crate::backend::BackendBuilder;
-use crate::protocol::TaskId;
+use crate::protocol::{GroupMeta, GroupMetaInfo, TaskId, TaskMetaInfo};
 use crate::protocol::{State, TaskMeta};
 
 pub type Key = String;
@@ -38,15 +39,15 @@ pub trait KeyValueStoreLayer: Send + Sync + Sized {
         self._get_key_for(Self::KEY_PREFIX_TASK, task_id, key)
     }
 
-    fn _get_key_for_group(&self, group_id: &TaskId, key: Option<Key>) -> String {
+    fn _get_key_for_group(&self, group_id: &str, key: Option<Key>) -> String {
         self._get_key_for(Self::KEY_PREFIX_GROUP, group_id, key)
     }
 
-    fn _get_key_for_chord(&self, group_id: &TaskId, key: Option<Key>) -> String {
-        self._get_key_for(Self::KEY_PREFIX_CHORD, group_id, key)
+    fn _get_key_for_chord(&self, chord_id: &str, key: Option<Key>) -> String {
+        self._get_key_for(Self::KEY_PREFIX_CHORD, chord_id, key)
     }
 
-    fn _get_key_for(&self, prefix: &str, id: &TaskId, key: Option<Key>) -> String {
+    fn _get_key_for(&self, prefix: &str, id: &str, key: Option<Key>) -> String {
         [prefix, id, key.unwrap_or_default().as_str()].join("")
     }
 
@@ -95,16 +96,51 @@ where
     async fn _fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta {
         if let Some(meta) = self._get(self._get_key_for_task(task_id, None)).await {
             if !meta.is_empty() {
-                return self._decode_task_meta(meta.into_string_lossy());
+                return self._decode::<TaskMeta>(meta.into_string_lossy());
             }
         }
 
-        TaskMeta::default()
+        TaskMeta {
+            info: TaskMetaInfo {
+                task_id: task_id.to_string(),
+                ..TaskMetaInfo::default()
+            },
+            ..TaskMeta::default()
+        }
     }
 
-    fn _decode_task_meta(&self, payload: String) -> TaskMeta {
-        // todo:
-        //   convert exception to rust exception
-        self._decode::<TaskMeta>(payload)
+    async fn _store_group_meta<D>(&self, group_id: &str, group_meta: GroupMeta)
+    where
+        D: Serialize + Send + Sync,
+    {
+        let data = self._encode(&group_meta);
+        self._set_with_state(
+            self._get_key_for_group(group_id, None),
+            data.as_bytes(),
+            State::SUCCESS,
+        )
+        .await;
+    }
+
+    async fn _forget_group_meta_by(&self, group_id: &str) {
+        self._delete(self._get_key_for_group(group_id, None))
+            .await
+            .unwrap();
+    }
+
+    async fn _fetch_group_meta_by(&self, group_id: &str) -> GroupMeta {
+        if let Some(meta) = self._get(self._get_key_for_group(group_id, None)).await {
+            if !meta.is_empty() {
+                return self._decode::<GroupMeta>(meta.into_string_lossy());
+            }
+        }
+
+        GroupMeta {
+            info: GroupMetaInfo {
+                task_id: group_id.to_string(),
+                ..GroupMetaInfo::default()
+            },
+            ..GroupMeta::default()
+        }
     }
 }

@@ -792,6 +792,7 @@ pub struct MessageBodyEmbed {
 pub enum BodyEncoding {
     Base64,
 }
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeliveryProperties {
     pub correlation_id: String,
@@ -924,7 +925,6 @@ pub struct TaskMetaInfo {
     pub children: Vec<String>,
 
     /// The date time when task status turned into ready.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub date_done: Option<String>,
 
     /// The group id for this task.
@@ -1003,11 +1003,11 @@ impl<R> TaskMeta<R> {
     }
 }
 
-impl TaskMeta<AnyValue> {
-    pub fn default<D>() -> TaskMeta<D>
-    where
-        D: for<'de> Deserialize<'de>,
-    {
+impl<D> Default for TaskMeta<D>
+where
+    D: for<'de> Deserialize<'de>,
+{
+    fn default() -> Self {
         TaskMeta {
             info: Default::default(),
             result: None,
@@ -1048,6 +1048,32 @@ where
             .transpose()?;
 
         Ok(TaskMeta { info, result })
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GroupMetaInfo {
+    /// The group id
+    pub task_id: String,  // note: it's strange to call a group id as task_id, but celery says that
+    /// The date time when all the tasks in this group are done
+    pub date_done: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GroupMeta<R = AnyValue> {
+    /// Group meta info
+    #[serde(flatten)]
+    pub info: GroupMetaInfo,
+    /// The serialized group result
+    pub result: Option<R>,
+}
+
+impl<R> Default for GroupMeta<R> {
+    fn default() -> Self {
+        GroupMeta {
+            info: GroupMetaInfo::default(),
+            result: None,
+        }
     }
 }
 

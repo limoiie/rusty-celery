@@ -8,7 +8,7 @@ use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, ImplLayer};
 use crate::backend::options::StoreOptions;
 use crate::backend::{Backend, BackendBasic, BackendBuilder};
 use crate::prelude::Task;
-use crate::protocol::{ExecResult, State, TaskId, TaskMeta, TaskMetaInfo};
+use crate::protocol::{ExecResult, GroupMeta, State, TaskId, TaskMeta, TaskMetaInfo};
 
 #[async_trait]
 pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
@@ -19,8 +19,6 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
     async fn _forget_task_meta_by(&self, task_id: &TaskId);
 
     async fn _fetch_task_meta_by(&self, task_id: &TaskId) -> TaskMeta;
-
-    fn _decode_task_meta(&self, payload: String) -> TaskMeta;
 
     async fn _get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.ensure_not_eager();
@@ -81,6 +79,14 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
         let meta = self._get_task_meta_by(task_id, false).await;
         self._set_cached(task_id.clone(), meta).await
     }
+
+    async fn _store_group_meta<D>(&self, group_id: &str, group_meta: GroupMeta)
+    where
+        D: Serialize + Send + Sync;
+
+    async fn _forget_group_meta_by(&self, group_id: &str);
+
+    async fn _fetch_group_meta_by(&self, group_id: &str) -> GroupMeta;
 }
 
 #[async_trait]
