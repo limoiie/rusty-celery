@@ -26,7 +26,7 @@ pub struct GetOptions {
 #[async_trait]
 pub trait BaseResult<R>: Send + Sync
 where
-    R: for<'de> Deserialize<'de> + Send + Sync + Clone,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     async fn is_successful(&self) -> bool;
 
@@ -51,6 +51,8 @@ pub trait BaseResultInfluenceParent {
     // async fn revoke_iteratively(&self, options: Option<RevokeOptions>) {
     //     unimplemented!()
     // }
+
+    fn to_any(self) -> Box<dyn FullResult<AnyValue>>;
 }
 
 pub trait FullResult<R>: BaseResult<R> + BaseResultInfluenceParent
@@ -66,9 +68,9 @@ where
 {
 }
 
-impl Debug for dyn FullResult<AnyValue> {
+impl<R> Debug for dyn FullResult<R> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<#FullResult#>")
+        write!(f, "$<impl FullResult<{}>>", std::any::type_name::<R>())
     }
 }
 
@@ -106,5 +108,9 @@ where
 impl BaseResultInfluenceParent for VoidResult {
     async fn forget_iteratively(&self) {
         unreachable!()
+    }
+
+    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
+        Box::new(VoidResult {})
     }
 }

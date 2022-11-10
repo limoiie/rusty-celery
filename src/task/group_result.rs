@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -6,7 +7,8 @@ use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, GetTaskResult};
-use crate::kombu_serde::AnyValue;
+use crate::error::BackendError;
+use crate::kombu_serde::{AnyValue, FromVec};
 use crate::task::base_result::{
     BaseResult, BaseResultInfluenceParent, FullResult, GetOptions, VoidResult,
 };
@@ -87,6 +89,10 @@ where
             parent.forget_iteratively().await;
         }
     }
+
+    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
+        unimplemented!()
+    }
 }
 
 impl<B, P> GroupAnyResult<B, P>
@@ -120,7 +126,121 @@ fn not_bool_to_future_result(b: bool) -> future::Ready<Result<bool, bool>> {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct GroupStructure(
-    (String, Option<Box<GroupStructure>>),
-    Vec<GroupStructure>,
-);
+pub struct GroupStructure((String, Option<Box<GroupStructure>>), Vec<GroupStructure>);
+
+#[derive(Debug, Clone)]
+pub struct GroupTupleResult<B, R, P = VoidResult>
+where
+    B: Backend,
+{
+    proxy: GroupAnyResult<B, P>,
+    pha: PhantomData<R>,
+}
+
+#[async_trait]
+impl<B, R, P> BaseResult<R> for GroupTupleResult<B, R, P>
+where
+    B: Backend,
+    R: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
+    P: Send + Sync,
+{
+    async fn is_successful(&self) -> bool {
+        self.proxy.is_successful().await
+    }
+
+    async fn is_failure(&self) -> bool {
+        self.proxy.is_failure().await
+    }
+
+    async fn is_waiting(&self) -> bool {
+        self.proxy.is_waiting().await
+    }
+
+    async fn is_ready(&self) -> bool {
+        self.proxy.is_ready().await
+    }
+
+    async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
+        self.proxy
+            .get(options)
+            .await?
+            .map(R::from_vec)
+            .transpose_result()
+            .map_err(BackendError::DeserializeError)
+    }
+}
+
+#[async_trait]
+impl<B, R, P> BaseResultInfluenceParent for GroupTupleResult<B, R, P>
+where
+    B: Backend,
+    R: Send + Sync,
+    P: BaseResultInfluenceParent + Send + Sync,
+{
+    async fn forget_iteratively(&self) {
+        self.proxy.forget_iteratively().await
+    }
+
+    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
+        unimplemented!()
+    }
+}
+
+impl<B, R, P> From<GroupAnyResult<B, P>> for GroupTupleResult<B, R, P>
+where
+    B: Backend,
+    R: Send + Sync,
+    P: BaseResultInfluenceParent + Send + Sync,
+{
+    fn from(other: GroupAnyResult<B, P>) -> Self {
+        Self {
+            proxy: other,
+            pha: Default::default(),
+        }
+    }
+}
+
+macro_rules! impl_group_tuple_result_new {
+    ( $( $result_type:ident )+ ) => {
+        impl<Bd, $( $result_type, )* Parent> GroupTupleResult<Bd, ( $( $result_type, )* ), Parent>
+        where
+            Bd: Backend,
+            $( $result_type: Clone + Send + Sync + for<'de> Deserialize<'de>, )*
+            Parent: BaseResultInfluenceParent + Send + Sync,
+        {
+            #[allow(non_snake_case)]
+            pub fn new(
+                group_id: String,
+                backend: Arc<Bd>,
+                $( $result_type: impl FullResult<$result_type> ),*
+            ) -> Self {
+                GroupTupleResult {
+                    proxy: GroupAnyResult::new(group_id, backend, vec![
+                        $( Arc::new($result_type.to_any()) ),*
+                    ]),
+                    pha: Default::default(),
+                }
+            }
+        }
+    };
+}
+
+impl_group_tuple_result_new! { A }
+impl_group_tuple_result_new! { A B }
+impl_group_tuple_result_new! { A B C }
+impl_group_tuple_result_new! { A B C D }
+impl_group_tuple_result_new! { A B C D E }
+
+trait Transpose<D, EI, EO> {
+    fn transpose_result(self) -> Result<Result<D, EO>, EI>;
+}
+
+impl<D, EI, EO> Transpose<D, EI, EO> for Result<Result<D, EI>, EO> {
+    fn transpose_result(self) -> Result<Result<D, EO>, EI> {
+        match self {
+            Ok(d) => Ok(Ok(d?)),
+            Err(e) => Ok(Err(e)),
+        }
+    }
+}
+

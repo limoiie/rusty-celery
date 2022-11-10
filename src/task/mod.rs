@@ -14,6 +14,7 @@ pub use base_result::FullResult;
 pub use base_result::VoidResult;
 pub use group_result::GroupAnyResult;
 pub use group_result::GroupStructure;
+pub use group_result::GroupTupleResult;
 pub use options::TaskOptions;
 pub use request::Request;
 pub use signature::Signature;

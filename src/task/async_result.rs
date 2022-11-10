@@ -13,6 +13,7 @@ use crate::protocol::{ExecResult, State, TaskMeta, TaskMetaInfo};
 use crate::task::base_result::{
     BaseResult, BaseResultInfluenceParent, CachedTaskMeta, GetOptions, VoidResult,
 };
+use crate::task::FullResult;
 
 /// An [`AsyncResult`] is a handle for the result of a task.
 #[derive(Debug, Clone)]
@@ -86,9 +87,9 @@ where
 #[async_trait]
 impl<B, R, P> BaseResultInfluenceParent for AsyncResult<B, R, P>
 where
-    B: Backend,
+    B: Backend + 'static,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-    P: BaseResultInfluenceParent + Send + Sync,
+    P: BaseResultInfluenceParent + Send + Sync + 'static,
 {
     async fn forget_iteratively(&self) {
         self.cache.lock().await.replace(None);
@@ -96,6 +97,15 @@ where
             parent.forget_iteratively().await;
         }
         self.backend.forget(&self.task_id).await
+    }
+
+    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
+        Box::new(AsyncResult {
+            task_id: self.task_id,
+            parent: self.parent,
+            backend: self.backend,
+            cache: Arc::new(Mutex::new(RefCell::new(None))),
+        })
     }
 }
 
@@ -109,15 +119,6 @@ where
             task_id,
             parent: None,
             backend,
-            cache: Arc::new(Mutex::new(RefCell::new(None))),
-        }
-    }
-
-    pub fn to_any(self) -> AsyncResult<B, AnyValue, P> {
-        AsyncResult {
-            task_id: self.task_id,
-            parent: self.parent,
-            backend: self.backend,
             cache: Arc::new(Mutex::new(RefCell::new(None))),
         }
     }

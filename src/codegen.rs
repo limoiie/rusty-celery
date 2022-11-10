@@ -357,10 +357,29 @@ macro_rules! group_any {
         $crate::task::GroupAnyResult::<_, $crate::task::VoidResult>::new(
             "fake-group-id".to_string(),
             app.backend.clone(),
-            [ $( Arc::new(Box::new(
-                    app.send_task($task).await?.to_any()
-                 ) as Box<dyn $crate::task::FullResult<$crate::kombu_serde::AnyValue>>),
-            )* ]
+            [ $( Arc::new(app.send_task($task).await?.to_any()), )* ]
         )
     }};
+}
+
+#[macro_export]
+macro_rules! group_tuple {
+    (
+        $app:expr, [
+            $( $task:expr ),*
+        ]
+    ) => {{
+        let ref app = $app;
+
+        $crate::task::GroupTupleResult::<_, ( $( $crate::auto! ($task) ),* ), VoidResult>::new(
+            "fake-group-id".to_string(),
+            app.backend.clone(),
+            $( app.send_task($task).await? ),*
+        )
+    }};
+}
+
+#[macro_export]
+macro_rules! auto {
+    ( $task:expr ) => { _ };
 }

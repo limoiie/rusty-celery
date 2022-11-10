@@ -54,6 +54,7 @@ mongodb = { version = "2.3.1", features = ["tokio-sync"] }
 tokio-executor-trait = "2.1.0"
 tokio-reactor-trait = "1.1.0"
 typed-builder = "0.11.0"
+impl-trait-for-tuples = "0.2.2"
 
 [dev-dependencies]
 rmp-serde = "0.15"

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use impl_trait_for_tuples::impl_for_tuples;
 
 use crate::error::ContentTypeError;
 use crate::protocol::ContentType;
@@ -72,6 +73,21 @@ impl AnyValue {
             #[cfg(feature = "serde_yaml")]
             AnyValue::YAML(_) => ContentType::Yaml,
         }
+    }
+}
+
+pub trait FromVec: Sized {
+    fn from_vec(vec: Vec<AnyValue>) -> Result<Self, ContentTypeError>;
+}
+
+#[impl_for_tuples(5)]
+#[tuple_types_no_default_trait_bound]
+impl FromVec for TupleIdentifier {
+    for_tuples!( where #( TupleIdentifier: for <'de> Deserialize<'de> )* );
+
+    fn from_vec(vec: Vec<AnyValue>) -> Result<Self, ContentTypeError> {
+        let mut iter = vec.into_iter();
+        Ok(for_tuples!( ( #( iter.next().unwrap().into::<TupleIdentifier>()? ),* ) ))
     }
 }
 
