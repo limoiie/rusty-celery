@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 pub use async_result::AsyncResult;
 pub use base_result::BaseResult;
-pub use base_result::BaseResultInfluenceParent;
 pub use base_result::FullResult;
 pub use base_result::VoidResult;
 pub use group_result::GroupAnyResult;

@@ -36,15 +36,6 @@ where
 
     async fn is_ready(&self) -> bool;
 
-    async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R>;
-
-    async fn wait(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
-        self.get(options).await
-    }
-}
-
-#[async_trait]
-pub trait BaseResultInfluenceParent {
     async fn forget_iteratively(&self);
 
     // #[allow(unused)]
@@ -52,23 +43,48 @@ pub trait BaseResultInfluenceParent {
     //     unimplemented!()
     // }
 
-    fn to_any(self) -> Box<dyn FullResult<AnyValue>>;
+    fn to_any(self) -> Box<dyn BaseResult<AnyValue>>;
+
+    async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R>;
+
+    async fn wait(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
+        self.get(options).await
+    }
 }
 
-pub trait FullResult<R>: BaseResult<R> + BaseResultInfluenceParent
+impl<R> Debug for dyn BaseResult<R> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "$<impl BaseResult<{}>>", std::any::type_name::<R>())
+    }
+}
+
+#[async_trait]
+pub trait BaseResultRequireP<R, P, PR>
 where
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
 }
 
-impl<T, R> FullResult<R> for T
+pub trait FullResult<R, P, PR>: BaseResult<R> + BaseResultRequireP<R, P, PR>
 where
-    T: BaseResult<R> + BaseResultInfluenceParent,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
 }
 
-impl<R> Debug for dyn FullResult<R> {
+impl<T, R, P, PR> FullResult<R, P, PR> for T
+where
+    T: BaseResult<R> + BaseResultRequireP<R, P, PR>,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
+{
+}
+
+impl<R, PR, P> Debug for dyn FullResult<R, PR, P> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "$<impl FullResult<{}>>", std::any::type_name::<R>())
     }
@@ -98,6 +114,14 @@ where
         unreachable!()
     }
 
+    async fn forget_iteratively(&self) {
+        unreachable!()
+    }
+
+    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
+        Box::new(VoidResult {})
+    }
+
     #[allow(unused)]
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
         unreachable!()
@@ -105,12 +129,10 @@ where
 }
 
 #[async_trait]
-impl BaseResultInfluenceParent for VoidResult {
-    async fn forget_iteratively(&self) {
-        unreachable!()
-    }
-
-    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
-        Box::new(VoidResult {})
-    }
+impl<R, P, PR> BaseResultRequireP<R, P, PR> for VoidResult
+where
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
+{
 }

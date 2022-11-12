@@ -9,27 +9,29 @@ use serde::{Deserialize, Serialize};
 use crate::backend::{Backend, GetTaskResult};
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, FromVec};
-use crate::task::base_result::{
-    BaseResult, BaseResultInfluenceParent, FullResult, GetOptions, VoidResult,
-};
+use crate::task::base_result::{BaseResult, BaseResultRequireP, GetOptions, VoidResult};
 
 #[derive(Debug, Clone)]
-pub struct GroupAnyResult<B, P = VoidResult>
+pub struct GroupAnyResult<B, P = VoidResult, PR = ()>
 where
     B: Backend,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub group_id: String,
     parent: Option<Arc<P>>,
-    children: Vec<Arc<Box<dyn FullResult<AnyValue>>>>,
+    children: Vec<Arc<Box<dyn BaseResult<AnyValue>>>>,
     #[allow(unused)]
     backend: Arc<B>,
+    pha: PhantomData<PR>,
 }
 
 #[async_trait]
-impl<B, P> BaseResult<Vec<AnyValue>> for GroupAnyResult<B, P>
+impl<B, P, PR> BaseResult<Vec<AnyValue>> for GroupAnyResult<B, P, PR>
 where
     B: Backend,
-    P: Send + Sync,
+    P: BaseResult<PR> + Send + Sync,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     async fn is_successful(&self) -> bool {
         future::try_join_all(
@@ -65,6 +67,18 @@ where
         .is_ok()
     }
 
+    async fn forget_iteratively(&self) {
+        future::join_all(self.children.iter().map(|r| r.forget_iteratively())).await;
+
+        if let Some(parent) = &self.parent {
+            parent.forget_iteratively().await;
+        }
+    }
+
+    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
+        unimplemented!()
+    }
+
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<Vec<AnyValue>> {
         future::try_join_all(
             self.children
@@ -77,41 +91,35 @@ where
 }
 
 #[async_trait]
-impl<B, P> BaseResultInfluenceParent for GroupAnyResult<B, P>
+impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for GroupAnyResult<B, P, PR>
 where
     B: Backend,
-    P: BaseResultInfluenceParent + Send + Sync,
+    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResult<PR> + Send + Sync,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
-    async fn forget_iteratively(&self) {
-        future::join_all(self.children.iter().map(|r| r.forget_iteratively())).await;
-
-        if let Some(parent) = &self.parent {
-            parent.forget_iteratively().await;
-        }
-    }
-
-    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
-        unimplemented!()
-    }
 }
 
-impl<B, P> GroupAnyResult<B, P>
+impl<B, P, PR> GroupAnyResult<B, P, PR>
 where
     B: Backend,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub fn new<RS>(group_id: String, backend: Arc<B>, results: RS) -> Self
     where
-        RS: IntoIterator<Item = Arc<Box<dyn FullResult<AnyValue>>>>,
+        RS: IntoIterator<Item = Arc<Box<dyn BaseResult<AnyValue>>>>,
     {
         GroupAnyResult {
             group_id,
             parent: None,
+            pha: PhantomData::default(),
             children: results.into_iter().collect(),
             backend,
         }
     }
 
-    fn iter_children(&self) -> impl Iterator<Item = &dyn FullResult<AnyValue>> {
+    fn iter_children(&self) -> impl Iterator<Item = &dyn BaseResult<AnyValue>> {
         self.children.iter().map(AsRef::as_ref).map(AsRef::as_ref)
     }
 }
@@ -129,20 +137,23 @@ fn not_bool_to_future_result(b: bool) -> future::Ready<Result<bool, bool>> {
 pub struct GroupStructure((String, Option<Box<GroupStructure>>), Vec<GroupStructure>);
 
 #[derive(Debug, Clone)]
-pub struct GroupTupleResult<B, R, P = VoidResult>
+pub struct GroupTupleResult<B, R, P = VoidResult, PR = ()>
 where
     B: Backend,
+    P: BaseResult<PR>,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
-    proxy: GroupAnyResult<B, P>,
-    pha: PhantomData<R>,
+    proxy: GroupAnyResult<B, P, PR>,
+    pha: PhantomData<(R, PR)>,
 }
 
 #[async_trait]
-impl<B, R, P> BaseResult<R> for GroupTupleResult<B, R, P>
+impl<B, R, P, PR> BaseResult<R> for GroupTupleResult<B, R, P, PR>
 where
     B: Backend,
     R: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
-    P: Send + Sync,
+    P: BaseResult<PR> + Send + Sync,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     async fn is_successful(&self) -> bool {
         self.proxy.is_successful().await
@@ -160,6 +171,14 @@ where
         self.proxy.is_ready().await
     }
 
+    async fn forget_iteratively(&self) {
+        self.proxy.forget_iteratively().await
+    }
+
+    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
+        unimplemented!()
+    }
+
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
         self.proxy
             .get(options)
@@ -171,28 +190,23 @@ where
 }
 
 #[async_trait]
-impl<B, R, P> BaseResultInfluenceParent for GroupTupleResult<B, R, P>
+impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for GroupTupleResult<B, R, P, PR>
 where
     B: Backend,
-    R: Send + Sync,
-    P: BaseResultInfluenceParent + Send + Sync,
+    R: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
+    P: BaseResult<PR>,
+    PR: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
 {
-    async fn forget_iteratively(&self) {
-        self.proxy.forget_iteratively().await
-    }
-
-    fn to_any(self) -> Box<dyn FullResult<AnyValue>> {
-        unimplemented!()
-    }
 }
 
-impl<B, R, P> From<GroupAnyResult<B, P>> for GroupTupleResult<B, R, P>
+impl<B, R, P, PR> From<GroupAnyResult<B, P, PR>> for GroupTupleResult<B, R, P, PR>
 where
     B: Backend,
     R: Send + Sync,
-    P: BaseResultInfluenceParent + Send + Sync,
+    P: BaseResult<PR> + Send + Sync,
+    PR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de>,
 {
-    fn from(other: GroupAnyResult<B, P>) -> Self {
+    fn from(other: GroupAnyResult<B, P, PR>) -> Self {
         Self {
             proxy: other,
             pha: Default::default(),
@@ -202,17 +216,18 @@ where
 
 macro_rules! impl_group_tuple_result_new {
     ( $( $result_type:ident )+ ) => {
-        impl<Bd, $( $result_type, )* Parent> GroupTupleResult<Bd, ( $( $result_type, )* ), Parent>
+        impl<Bd, $( $result_type, )* Parent, ParentR> GroupTupleResult<Bd, ( $( $result_type, )* ), Parent, ParentR>
         where
             Bd: Backend,
             $( $result_type: Clone + Send + Sync + for<'de> Deserialize<'de>, )*
-            Parent: BaseResultInfluenceParent + Send + Sync,
+            Parent: BaseResult<ParentR> + Send + Sync,
+            ParentR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de>,
         {
             #[allow(non_snake_case)]
             pub fn new(
                 group_id: String,
                 backend: Arc<Bd>,
-                $( $result_type: impl FullResult<$result_type> ),*
+                $( $result_type: impl BaseResult<$result_type> ),*
             ) -> Self {
                 GroupTupleResult {
                     proxy: GroupAnyResult::new(group_id, backend, vec![
@@ -243,4 +258,3 @@ impl<D, EI, EO> Transpose<D, EI, EO> for Result<Result<D, EI>, EO> {
         }
     }
 }
-
