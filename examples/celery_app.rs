@@ -6,7 +6,7 @@ use env_logger::Env;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use celery::prelude::*;
+use celery::{group_any, group_tuple, prelude::*};
 
 // This generates the task struct and impl with the name set to the function name "add"
 #[celery::task]

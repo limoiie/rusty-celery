@@ -1,11 +1,19 @@
 use std::fmt::{Debug, Formatter};
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+pub use async_result::AsyncResult;
+pub use group_result::{GroupAnyResult, GroupTupleResult};
+pub use void_result::VoidResult;
 
 use crate::backend::GetTaskResult;
 use crate::kombu_serde::AnyValue;
 use crate::protocol::{ExecResult, TaskMeta};
+
+mod async_result;
+mod group_result;
+mod void_result;
 
 pub type CachedTaskMeta<R> = Option<TaskMeta<ExecResult<R>>>;
 
@@ -43,7 +51,7 @@ where
     //     unimplemented!()
     // }
 
-    fn to_any(self) -> Box<dyn BaseResult<AnyValue>>;
+    fn into_any(self) -> Box<dyn BaseResult<AnyValue>>;
 
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R>;
 
@@ -90,49 +98,5 @@ impl<R, PR, P> Debug for dyn FullResult<R, PR, P> {
     }
 }
 
-/// Represents a non-existing result.
-pub struct VoidResult;
-
-#[async_trait]
-impl<R> BaseResult<R> for VoidResult
-where
-    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-{
-    async fn is_successful(&self) -> bool {
-        unreachable!()
-    }
-
-    async fn is_failure(&self) -> bool {
-        unreachable!()
-    }
-
-    async fn is_waiting(&self) -> bool {
-        unreachable!()
-    }
-
-    async fn is_ready(&self) -> bool {
-        unreachable!()
-    }
-
-    async fn forget_iteratively(&self) {
-        unreachable!()
-    }
-
-    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
-        Box::new(VoidResult {})
-    }
-
-    #[allow(unused)]
-    async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
-        unreachable!()
-    }
-}
-
-#[async_trait]
-impl<R, P, PR> BaseResultRequireP<R, P, PR> for VoidResult
-where
-    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-    P: BaseResult<PR>,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
-{
-}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GroupStructure((String, Option<Box<GroupStructure>>), Vec<GroupStructure>);

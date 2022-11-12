@@ -354,10 +354,10 @@ macro_rules! group_any {
     ) => {{
         let ref app = $app;
 
-        $crate::task::GroupAnyResult::<_, $crate::task::VoidResult, ()>::new(
+        $crate::result::GroupAnyResult::<_, $crate::result::VoidResult, ()>::new(
             "fake-group-id".to_string(),
             app.backend.clone(),
-            [ $( Arc::new(app.send_task($task).await?.to_any()), )* ]
+            [ $( Arc::new(app.send_task($task).await?.into_any()), )* ]
         )
     }};
 }
@@ -371,7 +371,7 @@ macro_rules! group_tuple {
     ) => {{
         let ref app = $app;
 
-        $crate::task::GroupTupleResult::<_, ( $( $crate::auto! ($task) ),* ), VoidResult, ()>::new(
+        $crate::result::GroupTupleResult::<_, ( $( $crate::auto! ($task) ),* ), $crate::result::VoidResult, ()>::new(
             "fake-group-id".to_string(),
             app.backend.clone(),
             $( app.send_task($task).await? ),*
@@ -381,5 +381,7 @@ macro_rules! group_tuple {
 
 #[macro_export]
 macro_rules! auto {
-    ( $task:expr ) => { _ };
+    ( $task:expr ) => {
+        _
+    };
 }

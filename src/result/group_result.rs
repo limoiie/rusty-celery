@@ -4,12 +4,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::future;
 use futures::FutureExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::backend::{Backend, GetTaskResult};
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, FromVec};
-use crate::task::base_result::{BaseResult, BaseResultRequireP, GetOptions, VoidResult};
+use crate::result::{BaseResult, BaseResultRequireP, GetOptions, VoidResult};
 
 #[derive(Debug, Clone)]
 pub struct GroupAnyResult<B, P = VoidResult, PR = ()>
@@ -75,7 +75,7 @@ where
         }
     }
 
-    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
+    fn into_any(self) -> Box<dyn BaseResult<AnyValue>> {
         Box::new(self)
     }
 
@@ -136,9 +136,6 @@ where
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct GroupStructure((String, Option<Box<GroupStructure>>), Vec<GroupStructure>);
-
 #[derive(Debug, Clone)]
 pub struct GroupTupleResult<B, R, P = VoidResult, PR = ()>
 where
@@ -178,7 +175,7 @@ where
         self.proxy.forget_iteratively().await
     }
 
-    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
+    fn into_any(self) -> Box<dyn BaseResult<AnyValue>> {
         Box::new(self.proxy)
     }
 
@@ -234,7 +231,7 @@ macro_rules! impl_group_tuple_result_new {
             ) -> Self {
                 GroupTupleResult {
                     proxy: GroupAnyResult::new(group_id, backend, vec![
-                        $( Arc::new($result_type.to_any()) ),*
+                        $( Arc::new($result_type.into_any()) ),*
                     ]),
                     pha: Default::default(),
                 }

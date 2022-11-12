@@ -21,7 +21,7 @@
 //! # use anyhow::Result;
 //! # use celery::prelude::*;
 //! # #[celery::task]
-//! # fn add(x: i32, y: i32) -> celery::task::TaskResult<i32> {
+//! # fn add(x: i32, y: i32) -> TaskResult<i32> {
 //! #     Ok(x + y)
 //! # }
 //! # #[tokio::main]
@@ -42,7 +42,7 @@
 //! # use anyhow::Result;
 //! # use celery::prelude::*;
 //! # #[celery::task]
-//! # fn add(x: i32, y: i32) -> celery::task::TaskResult<i32> {
+//! # fn add(x: i32, y: i32) -> TaskResult<i32> {
 //! #     Ok(x + y)
 //! # }
 //! # #[tokio::main]
@@ -64,7 +64,7 @@
 //! # use anyhow::Result;
 //! # use celery::prelude::*;
 //! # #[celery::task]
-//! # fn add(x: i32, y: i32) -> celery::task::TaskResult<i32> {
+//! # fn add(x: i32, y: i32) -> TaskResult<i32> {
 //! #     Ok(x + y)
 //! # }
 //! # #[tokio::main]
@@ -97,6 +97,7 @@ pub mod error;
 pub mod kombu_serde;
 pub mod prelude;
 pub mod protocol;
+pub mod result;
 pub mod task;
 
 #[cfg(feature = "codegen")]

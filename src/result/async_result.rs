@@ -11,9 +11,8 @@ use crate::backend::options::WaitOptions;
 use crate::backend::{Backend, GetTaskResult};
 use crate::kombu_serde::AnyValue;
 use crate::protocol::{ExecResult, State, TaskMeta, TaskMetaInfo};
-use crate::task::base_result::{
-    BaseResult, BaseResultRequireP, CachedTaskMeta, GetOptions, VoidResult,
-};
+use crate::result::{BaseResult, BaseResultRequireP, CachedTaskMeta, GetOptions};
+use crate::result::void_result::VoidResult;
 
 /// An [`AsyncResult`] is a handle for the result of a task.
 #[derive(Debug, Clone)]
@@ -63,7 +62,7 @@ where
         self.backend.forget(&self.task_id).await
     }
 
-    fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
+    fn into_any(self) -> Box<dyn BaseResult<AnyValue>> {
         Box::new(AsyncResult {
             task_id: self.task_id,
             parent: self.parent,

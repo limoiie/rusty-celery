@@ -25,8 +25,9 @@ use crate::config::{
 use crate::error::{BrokerError, CeleryError, TraceError};
 use crate::protocol::ContentType;
 use crate::protocol::{Message, TryDeserializeMessage};
+use crate::result::AsyncResult;
 use crate::routing::Rule;
-use crate::task::{AsyncResult, Signature, Task, TaskEvent, TaskOptions, TaskStatus};
+use crate::task::{Signature, Task, TaskEvent, TaskOptions, TaskStatus};
 
 mod trace;
 
@@ -268,7 +269,10 @@ where
             queue,
         );
         self.broker.send(&message, queue).await?;
-        Ok(AsyncResult::<D, T::Returns>::new(message.task_id().to_owned(), self.backend.clone()))
+        Ok(AsyncResult::<D, T::Returns>::new(
+            message.task_id().to_owned(),
+            self.backend.clone(),
+        ))
     }
 
     /// Register a task.
