@@ -1,5 +1,5 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use impl_trait_for_tuples::impl_for_tuples;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::ContentTypeError;
 use crate::protocol::ContentType;
@@ -73,6 +73,16 @@ impl AnyValue {
             #[cfg(feature = "serde_yaml")]
             AnyValue::YAML(_) => ContentType::Yaml,
         }
+    }
+
+    pub fn bury_vec(vec: Vec<AnyValue>) -> Option<Self> {
+        #[allow(unused)]
+        vec.iter()
+            .map(AnyValue::kind)
+            .map(Some)
+            .reduce(|a, b| if matches!(a, b) { a } else { None })
+            .flatten()
+            .map(|kind| kind.to_value(&vec))
     }
 }
 

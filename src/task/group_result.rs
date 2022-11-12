@@ -27,11 +27,11 @@ where
 }
 
 #[async_trait]
-impl<B, P, PR> BaseResult<Vec<AnyValue>> for GroupAnyResult<B, P, PR>
+impl<B, P, PR> BaseResult<AnyValue> for GroupAnyResult<B, P, PR>
 where
-    B: Backend,
-    P: BaseResult<PR> + Send + Sync,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    B: Backend + 'static,
+    P: BaseResult<PR> + Send + Sync + 'static,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
     async fn is_successful(&self) -> bool {
         future::try_join_all(
@@ -76,25 +76,23 @@ where
     }
 
     fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
-        unimplemented!()
+        Box::new(self)
     }
 
-    async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<Vec<AnyValue>> {
-        future::try_join_all(
-            self.children
-                .iter()
-                .map(|result| result.get(options.clone())),
-        )
-        .await
-        .map(|r| r.into_iter().collect())
+    async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<AnyValue> {
+        self.get_as_vec(options).await.map(|r| {
+            r.map(|vec| {
+                AnyValue::bury_vec(vec)
+                    .unwrap_or_else(|| self.backend.basic().result_serializer.to_value(&None::<()>))
+            })
+        })
     }
 }
 
 #[async_trait]
-impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for GroupAnyResult<B, P, PR>
+impl<B, P, PR> BaseResultRequireP<Vec<AnyValue>, P, PR> for GroupAnyResult<B, P, PR>
 where
     B: Backend,
-    R: Clone + Send + Sync + for<'de> Deserialize<'de>,
     P: BaseResult<PR> + Send + Sync,
     PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
@@ -122,15 +120,20 @@ where
     fn iter_children(&self) -> impl Iterator<Item = &dyn BaseResult<AnyValue>> {
         self.children.iter().map(AsRef::as_ref).map(AsRef::as_ref)
     }
-}
 
-fn bool_to_future_result(b: bool) -> future::Ready<Result<bool, bool>> {
-    (b).then(|| future::ok(b)).unwrap_or_else(|| future::err(b))
-}
+    pub async fn wait_as_vec(&self, options: Option<GetOptions>) -> GetTaskResult<Vec<AnyValue>> {
+        self.get_as_vec(options).await
+    }
 
-fn not_bool_to_future_result(b: bool) -> future::Ready<Result<bool, bool>> {
-    (!b).then(|| future::ok(!b))
-        .unwrap_or_else(|| future::err(!b))
+    pub async fn get_as_vec(&self, options: Option<GetOptions>) -> GetTaskResult<Vec<AnyValue>> {
+        future::try_join_all(
+            self.children
+                .iter()
+                .map(|result| result.get(options.clone())),
+        )
+        .await
+        .map(|r| r.into_iter().collect())
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -150,10 +153,10 @@ where
 #[async_trait]
 impl<B, R, P, PR> BaseResult<R> for GroupTupleResult<B, R, P, PR>
 where
-    B: Backend,
+    B: Backend + 'static,
     R: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
-    P: BaseResult<PR> + Send + Sync,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
+    P: BaseResult<PR> + Send + Sync + 'static,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
     async fn is_successful(&self) -> bool {
         self.proxy.is_successful().await
@@ -176,12 +179,12 @@ where
     }
 
     fn to_any(self) -> Box<dyn BaseResult<AnyValue>> {
-        unimplemented!()
+        Box::new(self.proxy)
     }
 
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
         self.proxy
-            .get(options)
+            .get_as_vec(options)
             .await?
             .map(R::from_vec)
             .transpose_result()
@@ -245,6 +248,15 @@ impl_group_tuple_result_new! { A B }
 impl_group_tuple_result_new! { A B C }
 impl_group_tuple_result_new! { A B C D }
 impl_group_tuple_result_new! { A B C D E }
+
+fn bool_to_future_result(b: bool) -> future::Ready<Result<bool, bool>> {
+    (b).then(|| future::ok(b)).unwrap_or_else(|| future::err(b))
+}
+
+fn not_bool_to_future_result(b: bool) -> future::Ready<Result<bool, bool>> {
+    (!b).then(|| future::ok(!b))
+        .unwrap_or_else(|| future::err(!b))
+}
 
 trait Transpose<D, EI, EO> {
     fn transpose_result(self) -> Result<Result<D, EO>, EI>;
