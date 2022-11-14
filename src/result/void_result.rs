@@ -1,18 +1,25 @@
 use async_trait::async_trait;
 use serde::Deserialize;
+
 use crate::backend::GetTaskResult;
+use crate::export::Serialize;
 use crate::kombu_serde::AnyValue;
 use crate::prelude::BaseResult;
-use crate::result::{BaseResultRequireP, GetOptions};
+use crate::result::{BaseResultRequireP, GetOptions, ResultStructure};
 
 /// Represents a non-existing result.
-pub struct VoidResult;
+#[derive(Clone, Serialize, Deserialize)]
+pub struct VoidResult(pub String);
 
 #[async_trait]
 impl<R> BaseResult<R> for VoidResult
 where
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
+    fn id(&self) -> String {
+        self.0.clone()
+    }
+
     async fn is_successful(&self) -> bool {
         unreachable!()
     }
@@ -34,7 +41,11 @@ where
     }
 
     fn into_any(self) -> Box<dyn BaseResult<AnyValue>> {
-        Box::new(VoidResult {})
+        Box::new(self)
+    }
+
+    fn to_structure(&self) -> Box<ResultStructure> {
+        Box::new(ResultStructure((self.0.clone(), None), vec![]))
     }
 
     #[allow(unused)]

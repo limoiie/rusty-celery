@@ -6,7 +6,8 @@ use crate::backend::options::StoreOptions;
 use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
 use crate::prelude::Task;
-use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
+use crate::protocol::{ExecResult, GroupMeta, State, TaskId, TaskMeta};
+use crate::result::ResultStructure;
 
 pub struct DisabledBackend {
     backend_basic: BackendBasic,
@@ -71,5 +72,25 @@ impl ImplLayer for DisabledBackend {
         T: Task,
     {
         // nothing to do
+    }
+
+    #[allow(unused)]
+    async fn store_group_result_(&self, group_id: &str, structure: ResultStructure) {
+        unreachable!("Backend is disabled!")
+    }
+
+    #[allow(unused)]
+    async fn restore_group_result_(&self, group_id: &str) -> Option<ResultStructure> {
+        unreachable!("Backend is disabled!")
+    }
+
+    #[allow(unused)]
+    async fn forget_group_(&self, group_id: &str) {
+        unreachable!("Backend is disabled!")
+    }
+
+    #[allow(unused)]
+    async fn get_group_meta_by_(&self, group_id: &str) -> GroupMeta {
+        unreachable!("Backend is disabled!")
     }
 }

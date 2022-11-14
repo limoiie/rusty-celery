@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use mongodb::{Client, Collection, Database};
 use mongodb::bson::doc;
 use mongodb::options::FindOneAndReplaceOptions;
+use mongodb::{Client, Collection, Database};
 use serde::{Deserialize, Serialize};
 
-use crate::backend::{BackendBasic, BackendBuilder};
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
+use crate::backend::{BackendBasic, BackendBuilder};
 use crate::error::BackendError;
 use crate::protocol::{ContentType, GroupMeta, GroupMetaInfo};
 use crate::protocol::{TaskId, TaskMeta, TaskMetaInfo};
@@ -193,10 +193,7 @@ impl BackendProtocolLayer for MongoDbBackend {
         }
     }
 
-    async fn _store_group_meta<D>(&self, group_id: &str, group_meta: GroupMeta)
-    where
-        D: Serialize + Send + Sync,
-    {
+    async fn _store_group_meta(&self, group_id: &str, group_meta: GroupMeta) {
         let group_meta = MongoGroupMeta::from_group_meta(group_meta, self._serializer());
 
         let opt = FindOneAndReplaceOptions::builder().upsert(true).build();

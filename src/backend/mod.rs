@@ -12,8 +12,9 @@ use crate::backend::options::{
 };
 use crate::config::BackendConfig;
 use crate::error::BackendError;
-use crate::protocol::ContentType;
+use crate::protocol::{ContentType, GroupMeta};
 use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
+use crate::result::ResultStructure;
 use crate::task::{Request, Task};
 
 pub use self::disabled::{DisabledBackend, DisabledBackendBuilder};
@@ -99,6 +100,12 @@ pub trait Backend: Send + Sync + Sized {
 
     /// Get [TaskMeta] by task id.
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta;
+
+    async fn save_group(&self, group_id: &str, group_structure: ResultStructure);
+
+    async fn forget_group(&self, group_id: &str);
+
+    async fn get_group_meta_by(&self, group_id: &str) -> GroupMeta;
 
     /// Store the task result to the [crate::backend::Backend].
     async fn store_result<D, T>(

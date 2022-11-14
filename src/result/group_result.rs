@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::backend::{Backend, GetTaskResult};
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, FromVec};
-use crate::result::{BaseResult, BaseResultRequireP, GetOptions, VoidResult};
+use crate::result::{BaseResult, BaseResultRequireP, GetOptions, ResultStructure, VoidResult};
 
 #[derive(Debug, Clone)]
 pub struct GroupAnyResult<B, P = VoidResult, PR = ()>
@@ -19,11 +19,10 @@ where
     PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub group_id: String,
-    parent: Option<Arc<P>>,
-    children: Vec<Arc<Box<dyn BaseResult<AnyValue>>>>,
-    #[allow(unused)]
-    backend: Arc<B>,
-    pha: PhantomData<PR>,
+    pub parent: Option<Arc<P>>,
+    pub children: Vec<Arc<Box<dyn BaseResult<AnyValue>>>>,
+    pub backend: Arc<B>,
+    pub pha: PhantomData<PR>,
 }
 
 #[async_trait]
@@ -33,6 +32,10 @@ where
     P: BaseResult<PR> + Send + Sync + 'static,
     PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
+    fn id(&self) -> String {
+        self.group_id.clone()
+    }
+
     async fn is_successful(&self) -> bool {
         future::try_join_all(
             self.iter_children()
@@ -77,6 +80,16 @@ where
 
     fn into_any(self) -> Box<dyn BaseResult<AnyValue>> {
         Box::new(self)
+    }
+
+    fn to_structure(&self) -> Box<ResultStructure> {
+        Box::new(ResultStructure(
+            (
+                self.id(),
+                self.parent.as_ref().map(|p| p.as_ref().to_structure()),
+            ),
+            self.iter_children().map(|c| *c.to_structure()).collect(),
+        ))
     }
 
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<AnyValue> {
@@ -136,6 +149,19 @@ where
     }
 }
 
+impl<B, P, PR> GroupAnyResult<B, P, PR>
+where
+    B: Backend + 'static,
+    P: BaseResult<PR> + 'static,
+    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
+{
+    pub async fn save(&self) {
+        self.backend
+            .save_group(self.group_id.as_str(), *self.to_structure())
+            .await
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GroupTupleResult<B, R, P = VoidResult, PR = ()>
 where
@@ -155,6 +181,10 @@ where
     P: BaseResult<PR> + Send + Sync + 'static,
     PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
+    fn id(&self) -> String {
+        self.proxy.id()
+    }
+
     async fn is_successful(&self) -> bool {
         self.proxy.is_successful().await
     }
@@ -177,6 +207,10 @@ where
 
     fn into_any(self) -> Box<dyn BaseResult<AnyValue>> {
         Box::new(self.proxy)
+    }
+
+    fn to_structure(&self) -> Box<ResultStructure> {
+        self.proxy.to_structure()
     }
 
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R> {
@@ -214,14 +248,26 @@ where
     }
 }
 
+impl<B, R, P, PR> GroupTupleResult<B, R, P, PR>
+where
+    B: Backend + 'static,
+    R: Send + Sync + 'static ,
+    P: BaseResult<PR> + Send + Sync + 'static,
+    PR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de> + 'static,
+{
+    pub async fn save(&self) {
+        self.proxy.save().await
+    }
+}
+
 macro_rules! impl_group_tuple_result_new {
     ( $( $result_type:ident )+ ) => {
         impl<Bd, $( $result_type, )* Parent, ParentR> GroupTupleResult<Bd, ( $( $result_type, )* ), Parent, ParentR>
         where
-            Bd: Backend,
-            $( $result_type: Clone + Send + Sync + for<'de> Deserialize<'de>, )*
-            Parent: BaseResult<ParentR> + Send + Sync,
-            ParentR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de>,
+            Bd: Backend + 'static,
+            $( $result_type: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static, )*
+            Parent: BaseResult<ParentR> + Send + Sync + 'static,
+            ParentR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de> + 'static,
         {
             #[allow(non_snake_case)]
             pub fn new(
@@ -265,5 +311,40 @@ impl<D, EI, EO> Transpose<D, EI, EO> for Result<Result<D, EI>, EO> {
             Ok(d) => Ok(Ok(d?)),
             Err(e) => Ok(Err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Deref;
+
+    use crate::backend::{BackendBuilder, DisabledBackendBuilder};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_to_structure() {
+        let backend = Arc::new(
+            DisabledBackendBuilder::new("disabled://localhost")
+                .build()
+                .await
+                .unwrap(),
+        );
+
+        let group_result = GroupAnyResult::<_, VoidResult, ()>::new(
+            "group#1".to_owned(),
+            backend,
+            vec![
+                Arc::new(Box::new(VoidResult("void#1".to_owned())) as Box<dyn BaseResult<AnyValue>>),
+                Arc::new(Box::new(VoidResult("void#2".to_owned())) as Box<dyn BaseResult<AnyValue>>),
+            ],
+        );
+
+        let structure = group_result.to_structure();
+
+        let structure_str = serde_json::to_string(structure.deref()).unwrap();
+        let expected_str = r#"[["group#1",null],[[["void#1",null],[]],[["void#2",null],[]]]]"#;
+
+        assert_eq!(structure_str, expected_str)
     }
 }

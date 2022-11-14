@@ -36,6 +36,8 @@ pub trait BaseResult<R>: Send + Sync
 where
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
+    fn id(&self) -> String;
+
     async fn is_successful(&self) -> bool;
 
     async fn is_failure(&self) -> bool;
@@ -52,6 +54,8 @@ where
     // }
 
     fn into_any(self) -> Box<dyn BaseResult<AnyValue>>;
+
+    fn to_structure(&self) -> Box<ResultStructure>;
 
     async fn get(&self, options: Option<GetOptions>) -> GetTaskResult<R>;
 
@@ -98,5 +102,6 @@ impl<R, PR, P> Debug for dyn FullResult<R, PR, P> {
     }
 }
 
+/// A more compact serializable format that represents the structure of the task results.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct GroupStructure((String, Option<Box<GroupStructure>>), Vec<GroupStructure>);
+pub struct ResultStructure((String, Option<Box<ResultStructure>>), Vec<ResultStructure>);

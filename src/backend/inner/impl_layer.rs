@@ -7,7 +7,8 @@ use crate::backend::options::{
 };
 use crate::backend::{Backend, BackendBasic, BackendBuilder, BackendResult};
 use crate::error::{BackendError, TaskError, TraceError};
-use crate::protocol::{ExecResult, State, TaskId, TaskMeta};
+use crate::protocol::{ExecResult, State, TaskId, TaskMeta, GroupMeta};
+use crate::result::ResultStructure;
 use crate::task::{Request, Task};
 
 #[async_trait]
@@ -148,6 +149,14 @@ pub trait ImplLayer: Send + Sync + Sized {
         D: Serialize + Send + Sync,
         T: Task;
 
+    async fn store_group_result_(&self, group_id: &str, structure: ResultStructure);
+
+    async fn restore_group_result_(&self, group_id: &str) -> Option<ResultStructure>;
+
+    async fn forget_group_(&self, group_id: &str);
+
+    async fn get_group_meta_by_(&self, group_id: &str) -> GroupMeta;
+
     #[allow(unused)]
     async fn on_chord_part_return_<T, D>(
         &self,
@@ -180,12 +189,6 @@ pub trait ImplLayer: Send + Sync + Sized {
     // fn fallback_chord_unlock(&self, header_result, body, countdown, kwargs)
     // fn ensure_chords_allowed(&self)
     // fn apply_chord(&self, header_result_args, body, kwargs)
-
-    // todo: group related apis
-    // fn get_group_meta(&self, group_id, cache=True)
-    // fn restore_group(&self, group_id, cache=True)
-    // fn save_group(&self, group_id, result)
-    // fn delete_group(&self, group_id)
 }
 
 #[async_trait]
@@ -241,6 +244,18 @@ impl<L: ImplLayer> Backend for L {
 
     async fn get_task_meta_by(&self, task_id: &TaskId, cache: bool) -> TaskMeta {
         self.get_task_meta_by_(task_id, cache).await
+    }
+
+    async fn save_group(&self, group_id: &str, group_structure: ResultStructure) {
+        self.store_group_result_(group_id, group_structure).await
+    }
+
+    async fn forget_group(&self, group_id: &str) {
+        self.forget_group_(group_id).await
+    }
+
+    async fn get_group_meta_by(&self, group_id: &str) -> GroupMeta {
+        self.get_group_meta_by_(group_id).await
     }
 
     async fn store_result<D, T>(

@@ -7,7 +7,7 @@ use crate::protocol::ContentType;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnyValue {
     JSON(serde_json::Value),
-    #[cfg(feature = "serde_yaml")]
+    #[cfg(any(test, feature = "extra_content_types"))]
     YAML(serde_yaml::Value),
 }
 
@@ -17,7 +17,7 @@ impl From<serde_json::Value> for AnyValue {
     }
 }
 
-#[cfg(feature = "serde_yaml")]
+#[cfg(any(test, feature = "extra_content_types"))]
 impl From<serde_yaml::Value> for AnyValue {
     fn from(value: serde_yaml::Value) -> Self {
         AnyValue::YAML(value)
@@ -31,7 +31,7 @@ impl Serialize for AnyValue {
     {
         match self {
             AnyValue::JSON(value) => value.serialize(serializer),
-            #[cfg(feature = "serde_yaml")]
+            #[cfg(any(test, feature = "extra_content_types"))]
             AnyValue::YAML(value) => value.serialize(serializer),
         }
     }
@@ -46,7 +46,7 @@ impl<'de> Deserialize<'de> for AnyValue {
             de_name if de_name.contains("serde_json") => {
                 serde_json::Value::deserialize(deserializer).map(|s| s.into())
             }
-            #[cfg(feature = "serde_yaml")]
+            #[cfg(any(test, feature = "extra_content_types"))]
             de_name if de_name.contains("serde_yaml") => {
                 serde_yaml::Value::deserialize(deserializer).map(|s| s.into())
             }
@@ -62,7 +62,7 @@ impl AnyValue {
     {
         match self {
             AnyValue::JSON(value) => serde_json::from_value(value).map_err(ContentTypeError::from),
-            #[cfg(feature = "serde_yaml")]
+            #[cfg(any(test, feature = "extra_content_types"))]
             AnyValue::YAML(value) => serde_yaml::from_value(value).map_err(ContentTypeError::from),
         }
     }
@@ -70,7 +70,7 @@ impl AnyValue {
     pub fn kind(&self) -> ContentType {
         match self {
             AnyValue::JSON(_) => ContentType::Json,
-            #[cfg(feature = "serde_yaml")]
+            #[cfg(any(test, feature = "extra_content_types"))]
             AnyValue::YAML(_) => ContentType::Yaml,
         }
     }

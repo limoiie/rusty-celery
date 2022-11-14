@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use bstr::ByteVec;
-use serde::Serialize;
 
 use crate::backend::inner::{BackendBasicLayer, BackendProtocolLayer, BackendSerdeLayer};
 use crate::backend::BackendBuilder;
@@ -109,10 +108,7 @@ where
         }
     }
 
-    async fn _store_group_meta<D>(&self, group_id: &str, group_meta: GroupMeta)
-    where
-        D: Serialize + Send + Sync,
-    {
+    async fn _store_group_meta(&self, group_id: &str, group_meta: GroupMeta) {
         let data = self._encode(&group_meta);
         self._set_with_state(
             self._get_key_for_group(group_id, None),

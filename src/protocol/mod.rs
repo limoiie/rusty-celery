@@ -1054,9 +1054,14 @@ where
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GroupMetaInfo {
     /// The group id
-    pub task_id: String,  // note: it's strange to call a group id as task_id, but celery says that
+    pub task_id: String, // note: it's strange to call a group id as task_id, but celery says that
+
     /// The date time when all the tasks in this group are done
     pub date_done: Option<String>,
+
+    /// The content type of the result.
+    #[serde(skip)]
+    pub content_type: ContentType,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

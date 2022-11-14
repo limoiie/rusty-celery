@@ -7,8 +7,12 @@ use serde::Serialize;
 use crate::backend::inner::{BackendBasicLayer, BackendSerdeLayer, ImplLayer};
 use crate::backend::options::StoreOptions;
 use crate::backend::{Backend, BackendBasic, BackendBuilder};
+use crate::kombu_serde::AnyValue;
 use crate::prelude::Task;
-use crate::protocol::{ExecResult, GroupMeta, State, TaskId, TaskMeta, TaskMetaInfo};
+use crate::protocol::{
+    ExecResult, GroupMeta, GroupMetaInfo, State, TaskId, TaskMeta, TaskMetaInfo,
+};
+use crate::result::ResultStructure;
 
 #[async_trait]
 pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
@@ -80,9 +84,21 @@ pub trait BackendProtocolLayer: BackendBasicLayer + BackendSerdeLayer {
         self._set_cached(task_id.clone(), meta).await
     }
 
-    async fn _store_group_meta<D>(&self, group_id: &str, group_meta: GroupMeta)
+    async fn _make_group_meta<D>(&self, group_id: String, result: D) -> GroupMeta<D>
     where
-        D: Serialize + Send + Sync;
+        D: Serialize + Send + Sync,
+    {
+        GroupMeta {
+            info: GroupMetaInfo {
+                task_id: group_id,
+                date_done: Some(DateTime::<Utc>::from(std::time::SystemTime::now()).to_rfc3339()),
+                content_type: self._serializer(),
+            },
+            result: Some(result),
+        }
+    }
+
+    async fn _store_group_meta(&self, group_id: &str, group_meta: GroupMeta);
 
     async fn _forget_group_meta_by(&self, group_id: &str);
 
@@ -123,5 +139,32 @@ impl<B: BackendProtocolLayer> ImplLayer for B {
             .unwrap();
 
         self._store_task_meta(task_id, task_meta).await;
+    }
+
+    async fn store_group_result_(&self, group_id: &str, structure: ResultStructure) {
+        let group_meta = self
+            ._make_group_meta(
+                group_id.to_owned(),
+                self._serializer().try_to_value(&structure).unwrap(),
+            )
+            .await;
+
+        self._store_group_meta(group_id, group_meta).await;
+    }
+
+    #[allow(unused)]
+    async fn restore_group_result_(&self, group_id: &str) -> Option<ResultStructure> {
+        self._fetch_group_meta_by(group_id).await.result
+            .map(AnyValue::into)
+            .transpose()
+            .unwrap()
+    }
+
+    async fn forget_group_(&self, group_id: &str) {
+        self._forget_group_meta_by(group_id).await;
+    }
+
+    async fn get_group_meta_by_(&self, group_id: &str) -> GroupMeta {
+        self._fetch_group_meta_by(group_id).await
     }
 }
