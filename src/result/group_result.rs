@@ -9,28 +9,23 @@ use serde::Deserialize;
 use crate::backend::{Backend, GetTaskResult};
 use crate::error::BackendError;
 use crate::kombu_serde::{AnyValue, FromVec};
-use crate::result::{BaseResult, BaseResultRequireP, GetOptions, ResultStructure, VoidResult};
+use crate::result::{BaseResult, BaseResultRequireP, GetOptions, ResultStructure};
 
 #[derive(Debug, Clone)]
-pub struct GroupAnyResult<B, P = VoidResult, PR = ()>
+pub struct GroupAnyResult<B>
 where
     B: Backend,
-    P: BaseResult<PR>,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub group_id: String,
-    pub parent: Option<Arc<P>>,
+    pub parent: Option<Arc<Box<dyn BaseResult<AnyValue>>>>,
     pub children: Vec<Arc<Box<dyn BaseResult<AnyValue>>>>,
     pub backend: Arc<B>,
-    pub pha: PhantomData<PR>,
 }
 
 #[async_trait]
-impl<B, P, PR> BaseResult<AnyValue> for GroupAnyResult<B, P, PR>
+impl<B> BaseResult<AnyValue> for GroupAnyResult<B>
 where
     B: Backend + 'static,
-    P: BaseResult<PR> + Send + Sync + 'static,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
     fn id(&self) -> String {
         self.group_id.clone()
@@ -103,7 +98,7 @@ where
 }
 
 #[async_trait]
-impl<B, P, PR> BaseResultRequireP<Vec<AnyValue>, P, PR> for GroupAnyResult<B, P, PR>
+impl<B, P, PR> BaseResultRequireP<Vec<AnyValue>, P, PR> for GroupAnyResult<B>
 where
     B: Backend,
     P: BaseResult<PR> + Send + Sync,
@@ -111,12 +106,11 @@ where
 {
 }
 
-impl<B, P, PR> GroupAnyResult<B, P, PR>
+impl<B> GroupAnyResult<B>
 where
     B: Backend,
-    P: BaseResult<PR>,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
+    // todo: builder api
     pub fn new<RS>(group_id: String, backend: Arc<B>, results: RS) -> Self
     where
         RS: IntoIterator<Item = Arc<Box<dyn BaseResult<AnyValue>>>>,
@@ -124,7 +118,6 @@ where
         GroupAnyResult {
             group_id,
             parent: None,
-            pha: PhantomData::default(),
             children: results.into_iter().collect(),
             backend,
         }
@@ -149,11 +142,9 @@ where
     }
 }
 
-impl<B, P, PR> GroupAnyResult<B, P, PR>
+impl<B> GroupAnyResult<B>
 where
     B: Backend + 'static,
-    P: BaseResult<PR> + 'static,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
     pub async fn save(&self) {
         self.backend
@@ -163,23 +154,19 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct GroupTupleResult<B, R, P = VoidResult, PR = ()>
+pub struct GroupTupleResult<B, R>
 where
     B: Backend,
-    P: BaseResult<PR>,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
-    proxy: GroupAnyResult<B, P, PR>,
-    pha: PhantomData<(R, PR)>,
+    proxy: GroupAnyResult<B>,
+    pha: PhantomData<R>,
 }
 
 #[async_trait]
-impl<B, R, P, PR> BaseResult<R> for GroupTupleResult<B, R, P, PR>
+impl<B, R> BaseResult<R> for GroupTupleResult<B, R>
 where
     B: Backend + 'static,
     R: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
-    P: BaseResult<PR> + Send + Sync + 'static,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
     fn id(&self) -> String {
         self.proxy.id()
@@ -224,7 +211,7 @@ where
 }
 
 #[async_trait]
-impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for GroupTupleResult<B, R, P, PR>
+impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for GroupTupleResult<B, R>
 where
     B: Backend,
     R: Send + Sync + Clone + FromVec + for<'de> Deserialize<'de>,
@@ -233,14 +220,12 @@ where
 {
 }
 
-impl<B, R, P, PR> From<GroupAnyResult<B, P, PR>> for GroupTupleResult<B, R, P, PR>
+impl<B, R> From<GroupAnyResult<B>> for GroupTupleResult<B, R>
 where
     B: Backend,
     R: Send + Sync,
-    P: BaseResult<PR> + Send + Sync,
-    PR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de>,
 {
-    fn from(other: GroupAnyResult<B, P, PR>) -> Self {
+    fn from(other: GroupAnyResult<B>) -> Self {
         Self {
             proxy: other,
             pha: Default::default(),
@@ -248,12 +233,10 @@ where
     }
 }
 
-impl<B, R, P, PR> GroupTupleResult<B, R, P, PR>
+impl<B, R> GroupTupleResult<B, R>
 where
     B: Backend + 'static,
-    R: Send + Sync + 'static ,
-    P: BaseResult<PR> + Send + Sync + 'static,
-    PR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de> + 'static,
+    R: Send + Sync + 'static,
 {
     pub async fn save(&self) {
         self.proxy.save().await
@@ -262,12 +245,10 @@ where
 
 macro_rules! impl_group_tuple_result_new {
     ( $( $result_type:ident )+ ) => {
-        impl<Bd, $( $result_type, )* Parent, ParentR> GroupTupleResult<Bd, ( $( $result_type, )* ), Parent, ParentR>
+        impl<Bd, $( $result_type, )*> GroupTupleResult<Bd, ( $( $result_type, )* )>
         where
             Bd: Backend + 'static,
             $( $result_type: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static, )*
-            Parent: BaseResult<ParentR> + Send + Sync + 'static,
-            ParentR: Clone + FromVec + Send + Sync + for<'de> Deserialize<'de> + 'static,
         {
             #[allow(non_snake_case)]
             pub fn new(
@@ -319,6 +300,7 @@ mod tests {
     use std::ops::Deref;
 
     use crate::backend::{BackendBuilder, DisabledBackendBuilder};
+    use crate::result::VoidResult;
 
     use super::*;
 
@@ -331,7 +313,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let group_result = GroupAnyResult::<_, VoidResult, ()>::new(
+        let group_result = GroupAnyResult::<_>::new(
             "group#1".to_owned(),
             backend,
             vec![

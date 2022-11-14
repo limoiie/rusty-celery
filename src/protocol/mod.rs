@@ -376,6 +376,7 @@ pub struct Message {
 }
 
 impl Message {
+    // noinspection DuplicatedCode
     /// Try deserializing the body.
     pub fn body<T: Task>(&self) -> Result<MessageBody<T>, ProtocolError> {
         match self.properties.content_type.as_str() {
