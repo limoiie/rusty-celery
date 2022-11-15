@@ -152,7 +152,7 @@ And then you can consume tasks from Rust or Python as explained above.
 | Consumers        | ✅      | |
 | Brokers          | ✅      | |
 | Beat             | ✅      | |
-| Backends         | 🔴      | |
+| Backends         | ✅      | |
 | [Baskets](https://github.com/rusty-celery/rusty-celery/issues/53) | 🔴      | |
 
 ### Brokers
@@ -164,7 +164,8 @@ And then you can consume tasks from Rust or Python as explained above.
 
 ### Backends
 
-|             | Status | Tracking |
-| ----------- |:------:| -------- |
-| RPC         | 🔴     | [![](https://img.shields.io/github/issues/rusty-celery/rusty-celery/Backend%3A%20RPC?label=Issues)](https://github.com/rusty-celery/rusty-celery/labels/Backend%3A%20RPC) |
-| Redis       | 🔴     | [![](https://img.shields.io/github/issues/rusty-celery/rusty-celery/Backend%3A%20Redis?label=Issues)](https://github.com/rusty-celery/rusty-celery/labels/Backend%3A%20Redis) |
+|         | Status | Tracking |
+|---------|:------:| -------- |
+| RPC     | 🔴     | [![](https://img.shields.io/github/issues/rusty-celery/rusty-celery/Backend%3A%20RPC?label=Issues)](https://github.com/rusty-celery/rusty-celery/labels/Backend%3A%20RPC) |
+| Redis   | ✅     | [![](https://img.shields.io/github/issues/rusty-celery/rusty-celery/Backend%3A%20Redis?label=Issues)](https://github.com/rusty-celery/rusty-celery/labels/Backend%3A%20Redis) |
+| Mongodb | ✅     | |
