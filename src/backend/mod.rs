@@ -105,6 +105,8 @@ pub trait Backend: Send + Sync + Sized {
 
     async fn forget_group(&self, group_id: &str);
 
+    async fn get_group(&self, group_id: &str) -> Option<ResultStructure>;
+
     async fn get_group_meta_by(&self, group_id: &str) -> GroupMeta;
 
     /// Store the task result to the [crate::backend::Backend].
@@ -144,12 +146,6 @@ pub trait Backend: Send + Sync + Sized {
     // fn fallback_chord_unlock(&self, header_result, body, countdown, kwargs)
     // fn ensure_chords_allowed(&self)
     // fn apply_chord(&self, header_result_args, body, kwargs)
-
-    // todo: group related apis
-    // fn get_group_meta(&self, group_id, cache=True)
-    // fn restore_group(&self, group_id, cache=True)
-    // fn save_group(&self, group_id, result)
-    // fn delete_group(&self, group_id)
 }
 
 #[async_trait]

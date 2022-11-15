@@ -254,6 +254,10 @@ impl<L: ImplLayer> Backend for L {
         self.forget_group_(group_id).await
     }
 
+    async fn get_group(&self, group_id: &str) -> Option<ResultStructure> {
+        self.restore_group_result_(group_id).await
+    }
+
     async fn get_group_meta_by(&self, group_id: &str) -> GroupMeta {
         self.get_group_meta_by_(group_id).await
     }

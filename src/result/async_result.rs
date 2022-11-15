@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::convert::TryInto;
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,32 +10,26 @@ use crate::backend::options::WaitOptions;
 use crate::backend::{Backend, GetTaskResult};
 use crate::kombu_serde::AnyValue;
 use crate::protocol::{ExecResult, State, TaskMeta, TaskMetaInfo};
-use crate::result::void_result::VoidResult;
 use crate::result::{BaseResult, BaseResultRequireP, CachedTaskMeta, GetOptions, ResultStructure};
 
 /// An [`AsyncResult`] is a handle for the result of a task.
 #[derive(Debug, Clone)]
-pub struct AsyncResult<B, R = (), P = VoidResult, PR = ()>
+pub struct AsyncResult<B, R = ()>
 where
     B: Backend,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-    P: BaseResult<PR>,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub task_id: String,
-    parent: Option<Arc<P>>,
+    parent: Option<Arc<Box<dyn BaseResult<AnyValue>>>>,
     backend: Arc<B>,
     cache: Arc<Mutex<RefCell<CachedTaskMeta<R>>>>,
-    pha: PhantomData<PR>,
 }
 
 #[async_trait]
-impl<B, R, P, PR> BaseResult<R> for AsyncResult<B, R, P, PR>
+impl<B, R> BaseResult<R> for AsyncResult<B, R>
 where
     B: Backend + 'static,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-    P: BaseResult<PR> + Send + Sync + 'static,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de> + 'static,
 {
     fn id(&self) -> String {
         self.task_id.clone()
@@ -72,13 +65,15 @@ where
             parent: self.parent,
             backend: self.backend,
             cache: Arc::new(Mutex::new(RefCell::new(None))),
-            pha: Default::default(),
         })
     }
 
     fn to_structure(&self) -> Box<ResultStructure> {
         Box::new(ResultStructure(
-            (self.id(), self.parent.as_ref().map(|p| p.as_ref().to_structure())),
+            (
+                self.id(),
+                self.parent.as_ref().map(|p| p.as_ref().to_structure()),
+            ),
             vec![],
         ))
     }
@@ -117,7 +112,7 @@ where
 }
 
 #[async_trait]
-impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for AsyncResult<B, R, P, PR>
+impl<B, R, P, PR> BaseResultRequireP<R, P, PR> for AsyncResult<B, R>
 where
     B: Backend,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
@@ -126,12 +121,10 @@ where
 {
 }
 
-impl<B, R, P, PR> AsyncResult<B, R, P, PR>
+impl<B, R> AsyncResult<B, R>
 where
     B: Backend,
     R: Clone + Send + Sync + for<'de> Deserialize<'de>,
-    P: BaseResult<PR> + Send + Sync,
-    PR: Clone + Send + Sync + for<'de> Deserialize<'de>,
 {
     pub fn new(task_id: String, backend: Arc<B>) -> Self {
         Self {
@@ -139,8 +132,11 @@ where
             parent: None,
             backend,
             cache: Arc::new(Mutex::new(RefCell::new(None))),
-            pha: Default::default(),
         }
+    }
+
+    pub fn with_parent(self, parent: Option<Arc<Box<dyn BaseResult<AnyValue>>>>) -> Self {
+        Self { parent, ..self }
     }
 
     pub async fn status(&self) -> State {

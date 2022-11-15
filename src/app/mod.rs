@@ -25,7 +25,7 @@ use crate::config::{
 use crate::error::{BrokerError, CeleryError, TraceError};
 use crate::protocol::ContentType;
 use crate::protocol::{Message, TryDeserializeMessage};
-use crate::result::AsyncResult;
+use crate::result::{AsyncResult, GroupAnyResult};
 use crate::routing::Rule;
 use crate::task::{Signature, Task, TaskEvent, TaskOptions, TaskStatus};
 
@@ -426,6 +426,13 @@ where
     /// Close channels and connections.
     pub async fn close(&self) -> Result<(), CeleryError> {
         Ok(self.broker.close().await?)
+    }
+
+    pub async fn restore_group_result(&self, group_id: &str) -> Option<GroupAnyResult<D>> {
+        self.backend
+            .get_group(group_id)
+            .await
+            .and_then(|structure| structure.restore_group(self.backend.clone()))
     }
 
     /// Consume tasks from the default queue.
