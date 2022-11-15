@@ -9,9 +9,12 @@ import time
 from celery import Celery
 from celery.bin.celery import main as _main
 
-my_app = Celery("celery",
-                broker=os.environ.get("REDIS_ADDR", "redis://127.0.0.1:6379"),
-                backend=os.environ.get("REDIS_ADDR", "redis://127.0.0.1:6379"))
+my_app = Celery(
+    "celery",
+    broker=os.environ.get("REDIS_ADDR", "redis://127.0.0.1:6379"),
+    backend=os.environ.get("MONGO_ADDR", "mongodb://127.0.0.1:27017"),
+    # backend=os.environ.get("REDIS_ADDR", "redis://127.0.0.1:6379"),
+)
 my_app.conf.update(
     # result_backend=None,
     # task_ignore_result=True,
@@ -23,7 +26,8 @@ my_app.conf.update(
 
 
 # NOTE: we have to set the name for tasks manually in order to match the names
-# of the Rust tasks. Otherwise the task names here would be prefixed with 'celery.'.
+# of the Rust tasks. Otherwise the task names here would be prefixed with
+# 'celery.'.
 @my_app.task(name="add")
 def add(x, y):
     return x + y
@@ -37,7 +41,8 @@ def add(x, y):
 )
 def buggy_task():
     raise RuntimeError(
-        "This error is part of the example: it is used to showcase error handling")
+        "This error is part of the example: it is used to showcase error "
+        "handling")
 
 
 @my_app.task(name="long_running_task", max_retries=2)
@@ -82,10 +87,12 @@ def main():
                 if task == "add":
                     x, y = random.randint(10, 100), random.randint(10, 100)
                     print(f'{x} + {y} == ', end='', flush=True)
-                    sum = add.apply_async(args=(x, y)).wait()
-                    print(f'{sum}')
+                    res = add.apply_async(args=(x, y)).wait()
+                    print(f'{res}')
                 elif task == "buggy_task":
-                    buggy_task.apply_async()
+                    print(f'running buggy task...')
+                    res = buggy_task.apply_async().wait()
+                    print(f'{res}')
                 elif task == "long_running_task":
                     long_running_task.apply_async()
                 else:

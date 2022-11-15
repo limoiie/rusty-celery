@@ -1,11 +1,14 @@
 #![allow(non_upper_case_globals)]
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use env_logger::Env;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
+use celery::backend::Backend;
 use celery::{group_any, group_tuple, prelude::*};
 
 // This generates the task struct and impl with the name set to the function name "add"
@@ -53,7 +56,7 @@ fn bound_task(task: &Self) {
 enum CeleryOpt {
     Consume,
     Produce {
-        #[structopt(possible_values = &["add", "buggy_task", "bound_task", "long_running_task"])]
+        #[structopt(possible_values = &["add", "group", "buggy_task", "bound_task", "long_running_task"])]
         tasks: Vec<String>,
     },
 }
@@ -67,7 +70,8 @@ async fn main() -> Result<()> {
     let my_app = celery::app!(
         broker = RedisBroker { std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://127.0.0.1:6379/".into()) },
         // broker = AMQPBroker { std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://127.0.0.1:5672".into()) },
-        backend = RedisBackend { std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://127.0.0.1:6379".into()) },
+        // backend = RedisBackend { std::env::var("REDIS_ADDR").unwrap_or_else(|_| "redis://127.0.0.1:6379".into()) },
+        backend = MongoDbBackend { std::env::var("MONGO_ADDR").unwrap_or_else(|_| "mongodb://127.0.0.1:27017".into())},
         tasks = [
             add,
             buggy_task,
@@ -114,11 +118,45 @@ async fn main() -> Result<()> {
             } else {
                 for task in tasks {
                     match task.as_str() {
-                        "add" => my_app.send_task(add::new(1, 2)).await?,
-                        "bound_task" => my_app.send_task(bound_task::new()).await?,
-                        "buggy_task" => my_app.send_task(buggy_task::new()).await?,
+                        "add" => {
+                            print!("{} + {} == ", 1, 2);
+                            let res = my_app
+                                .send_task(add::new(1, 2))
+                                .await?
+                                .wait(None)
+                                .await
+                                .unwrap()
+                                .unwrap();
+                            println!("{}", res)
+                        }
+                        "group" => {
+                            print!("({} + {}, {} + {}) == ", 1, 2, 3, 4);
+                            let group = group_any!(my_app, [add::new(1, 2), add::new(3, 4)]);
+                            let res = group.wait(None).await?.unwrap();
+                            println!("{:?}", res);
+
+                            print!("({} + {}, {} + {}) == ", 1, 2, 3, 4);
+                            let group = group_tuple!(my_app, [add::new(1, 2), add::new(3, 4)]);
+                            let res = group.wait(None).await?.unwrap();
+                            println!("{:?}", res);
+
+                            group.save().await;
+                            let group_meta =
+                                my_app.backend.get_group_meta_by(group.id().as_str()).await;
+                            println!("structure: {:?}", group_meta.result);
+
+                            let group = my_app.restore_group_result(group.id().as_str()).await.unwrap();
+                            let res = group.wait(None).await?.unwrap();
+                            println!("restored {:?}", res);
+                        }
+                        "bound_task" => {
+                            my_app.send_task(bound_task::new()).await?;
+                        }
+                        "buggy_task" => {
+                            my_app.send_task(buggy_task::new()).await?;
+                        }
                         "long_running_task" => {
-                            my_app.send_task(long_running_task::new(Some(3))).await?
+                            my_app.send_task(long_running_task::new(Some(3))).await?;
                         }
                         _ => panic!("unknown task"),
                     };
