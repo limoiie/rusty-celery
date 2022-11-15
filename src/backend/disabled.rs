@@ -23,7 +23,7 @@ impl BackendBuilder for DisabledBackendBuilder {
 
     fn new(_backend_url: &str) -> Self {
         Self {
-            backend_basic: BackendBasic::new(_backend_url),
+            backend_basic: BackendBasic::new("disabled://localhost:0"),
         }
     }
 

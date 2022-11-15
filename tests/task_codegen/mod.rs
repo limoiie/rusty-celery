@@ -104,8 +104,8 @@ fn inferred_return_type() {
 }
 
 #[cfg(any(test, feature = "extra_content_types"))]
-use celery::protocol::MessageContentType::MsgPack;
-#[celery::task(content_type = MsgPack)]
+use celery::protocol::MessageContentType::Json;
+#[celery::task(content_type = Json)]
 fn custom_content_type() {
     println!()
 }

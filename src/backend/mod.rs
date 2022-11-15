@@ -167,8 +167,8 @@ pub trait BackendBuilder: Sized {
                 "{}://{}:***@{}:{}/{}",
                 url.scheme(),
                 url.username(),
-                url.host_str().unwrap(),
-                url.port().unwrap(),
+                url.host_str().unwrap_or("localhost"),
+                url.port().unwrap_or(0),
                 url.path(),
             ),
             None => {
