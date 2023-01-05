@@ -19,6 +19,7 @@ use super::{Broker, BrokerBuilder};
 use crate::error::{BrokerError, ProtocolError};
 use crate::protocol::{Message, MessageHeaders, MessageProperties, TryDeserializeMessage};
 use tokio_executor_trait::Tokio as TokioExecutor;
+#[cfg(unix)]
 use tokio_reactor_trait::Tokio as TokioReactor;
 
 struct Config {
@@ -86,9 +87,13 @@ impl BrokerBuilder for AMQPBrokerBuilder {
 
         let conn = Connection::connect_uri(
             uri.clone(),
+            #[cfg(unix)]
             ConnectionProperties::default()
                 .with_executor(TokioExecutor::current())
                 .with_reactor(TokioReactor),
+            #[cfg(windows)]
+            ConnectionProperties::default()
+                .with_executor(TokioExecutor::current()),
         )
         .await?;
 
@@ -342,9 +347,13 @@ impl Broker for AMQPBroker {
             uri.query.connection_timeout = Some(connection_timeout as u64);
             *conn = Connection::connect_uri(
                 uri,
+                #[cfg(unix)]
                 ConnectionProperties::default()
                     .with_executor(TokioExecutor::current())
                     .with_reactor(TokioReactor),
+                #[cfg(windows)]
+                ConnectionProperties::default()
+                    .with_executor(TokioExecutor::current()),
             )
             .await?;
 
@@ -581,7 +590,7 @@ fn amqp_value_to_u32(v: &AMQPValue) -> Option<u32> {
         AMQPValue::ShortInt(n) => Some(*n as u32),
         AMQPValue::ShortUInt(n) => Some(*n as u32),
         AMQPValue::LongInt(n) => Some(*n as u32),
-        AMQPValue::LongUInt(n) => Some(*n as u32),
+        AMQPValue::LongUInt(n) => Some(*n),
         AMQPValue::LongLongInt(n) => Some(*n as u32),
         _ => None,
     }
